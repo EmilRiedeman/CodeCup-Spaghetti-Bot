@@ -304,29 +304,35 @@ namespace Game {
 
 #define COLOR_BOARD
     class Board {
-    private:
-        // Union Find:
-        constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
-        constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
+    public:
 #ifdef COLOR_BOARD
         //                                   RESET  BLUE       RED         BLUE2      RED2  GRAY (5)
         constexpr static const char* COLOR[] {"39", "38;5;17", "38;5;196", "38;5;31", "91", "38;5;240"};
 #endif
+    private:
+        // Union Find:
+        constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
+        constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
         struct UnionSet {
             uint8_t borders[2]{};
+            JointPosition tips[2]{}, root = -1;
             uint size = 1;
-            uint8_t root;
 #ifdef COLOR_BOARD
             uint8_t color = 0;
 #endif
 
             UnionSet() = default;
-            constexpr UnionSet(const UnionSet&) = default;
-            constexpr UnionSet(UnionSet&&) noexcept = default;
+            ic_func UnionSet(const UnionSet&) = default;
+            ic_func UnionSet(UnionSet&&) noexcept = default;
 
-            constexpr UnionSet& operator=(UnionSet&&) noexcept = default;
+            ic_func UnionSet& operator=(UnionSet&&) noexcept = default;
 
-            void handleBorder(uint8_t border) {
+            const_ic_func bool getTip(JointPosition tip) const {
+                if (tips[0] == tip) return true;
+                return false;
+            }
+
+            ic_func void handleBorder(uint8_t border) {
                 if (!borders[0]) borders[0] = border;
                 else borders[1] = border;
             }
@@ -334,6 +340,7 @@ namespace Game {
             ic_func void reset() {
                 size = 1;
                 borders[0] = borders[1] = 0;
+                tips[0] = tips[1] = root;
             }
 
             const_ic_func bool enclosed() const {
@@ -379,20 +386,26 @@ namespace Game {
             return findConstUnion(_union_parents[pos]);
         }
 
-        ic_func UnionSet* unite(uint8_t a, uint8_t b, BoardChange* change) {
-            a = findUnion(a, change);
+        ic_func UnionSet* unite(JointPosition aTip, uint8_t b, JointPosition bTip, BoardChange* change) {
+            uint8_t a = findUnion(aTip, change);
             b = findUnion(b, change);
             auto A = &_union_sets[a], B = &_union_sets[b];
             if (a == b) return A;
-            if (*B < *A) { // todo tips
+            /*if (*B < *A) {
                 std::swap(A, B);
                 std::swap(a, b);
-            }
+            }*/
+            bool bTipI = B->getTip(bTip);
+            JointPosition tip = A->tips[!A->getTip(aTip)];
+
             if (change) {
                 change->union_parent_stack.emplace(a, _union_parents[a]);
+                change->union_parent_stack.emplace(tip, _union_parents[tip]);
                 change->union_unite_stack.emplace(*B);
             }
             _union_parents[a] = b;
+            _union_parents[tip] = b;
+            B->tips[bTipI] = tip;
             B->size += A->size;
             if (A->borders[0]) B->handleBorder(A->borders[0]);
             return B;
@@ -406,7 +419,7 @@ namespace Game {
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
-        const_ic_func JointPosition neighbour(Position p, Direction d, uint8_t type) const {
+        const_ic_func JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
             return getJoint(p.transform(d), !d);
         }
@@ -429,8 +442,8 @@ namespace Game {
 
         Board() {
             for (uint8_t i = 0; i < AIR; ++i) {
-                _union_parents[i] = i;
-                _union_sets[i].root = i;
+                _union_sets[i].root = _union_parents[i] = i;
+                _union_sets[i].reset();
             }
         }
 
@@ -472,7 +485,8 @@ namespace Game {
                 UnionSet* sets[] = {&_union_sets[j0], &_union_sets[j1]};
                 uint counts[5]{}; // ab(=11) a = set, b = side
                 for (uint i = 0; i < 4u; ++i) {
-                    neighbours[i] = neighbour(pos, SIDES[type][i], type);
+                    const JointPosition neigh = neighbour(pos, SIDES[type][i]);
+                    neighbours[i] = neigh;
                     if (neighbours[i] == AIR) continue;
                     if (neighbours[i] < AIR) neighbours[i] = findUnion(neighbours[i], log);
                     uint set = i & 1u; // 0 1 0 1 (boolean)
@@ -499,7 +513,7 @@ namespace Game {
                             } else counts[count_index] = _union_sets[neighbours[i]].size;
                         } else if (!set) counts[4] = _union_sets[neighbours[i]].size;
 
-                        sets[set] = unite(neighbours[i], j0 | set, log);
+                        sets[set] = unite(j0 | set, neighbours[i], neigh, log);
                     } else sets[set]->handleBorder(neighbours[i]);
 
                     if (sets[set]->enclosed()) {
@@ -553,11 +567,11 @@ namespace Game {
                 change.union_parent_stack.pop();
             }
             while (!change.union_unite_stack.empty()) {
-                _union_sets[change.union_unite_stack.top().root] = std::move(change.union_unite_stack.top());
+                _union_sets[change.union_unite_stack.top().root] = std::forward<UnionSet>(change.union_unite_stack.top());
                 change.union_unite_stack.pop();
             }
             _union_sets[change.move << 1].reset();
-            _union_sets[(change.move << 1) | 1].reset();
+            _union_sets[(change.move << 1) | 1u].reset();
         }
 
         const_ic_func bool isOver() const {
