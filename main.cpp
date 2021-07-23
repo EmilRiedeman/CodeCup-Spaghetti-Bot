@@ -419,7 +419,7 @@ namespace Game {
             {RIGHT, LEFT, DOWN, UP},
         };
 
-        static const constexpr bool ORIENTATIONS[][4] {
+        static const constexpr uint8_t ORIENTATIONS[][4] {
         //  UP DOWN LEFT RIGHT
             {},
             {0, 1, 1, 0},
