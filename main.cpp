@@ -6,6 +6,7 @@
 #include <vector>
 
 typedef uint_fast8_t uint8_t;
+typedef uint32_t uint;
 
 #define ic_func inline constexpr
 #define const_ic_func [[nodiscard]] ic_func
@@ -31,7 +32,7 @@ namespace Utils {
     static Random* RNG;
 
     struct Random final {
-        uint32_t seed;
+        uint seed;
 
         explicit Random(
                 const uint64_t &seed=
@@ -40,13 +41,13 @@ namespace Utils {
         ): seed(seed) {}
 
         [[nodiscard]]
-        inline uint32_t nextInt() {
+        inline uint nextInt() {
             seed = (214013u * seed + 2531011u);
             return (seed >> 16u) & 0x7FFFu;
         }
 
         [[nodiscard]]
-        inline uint32_t nextInt(uint32_t range) {
+        inline uint nextInt(uint range) {
             return nextInt() % range;
         }
 
@@ -86,7 +87,7 @@ namespace Utils {
             word &= ~(1ull << index);
         }
 
-        const_ic_func uint32_t count() const {
+        const_ic_func uint count() const {
             return __builtin_popcountll(word);
         }
 
@@ -114,13 +115,13 @@ namespace Utils {
 
         struct iterator {
             using iterator_category = std::forward_iterator_tag;
-            using value_type        = uint32_t;
+            using value_type        = uint;
 
             uint64_t a = 0;
             ic_func void operator++() {
                 a ^= -a & a;
             }
-            ic_func uint32_t operator*() const {
+            ic_func uint operator*() const {
                 return __builtin_ctzll(a);
             }
 
@@ -169,8 +170,8 @@ namespace Game {
     using Utils::TwoBitArray;
     using Utils::BitSet64;
 
-    constexpr const static uint32_t WIDTH = 7;
-    constexpr const static uint32_t HEIGHT = 9;
+    constexpr const static uint WIDTH = 7;
+    constexpr const static uint HEIGHT = 9;
 
     enum Direction: uint8_t {
         UP,
@@ -200,7 +201,7 @@ namespace Game {
     struct Position {
         uint8_t pos = -1;
 
-        ic_func Position(uint32_t x, uint32_t y): pos(y * WIDTH + x) {
+        ic_func Position(uint x, uint y): pos(y * WIDTH + x) {
         }
 
         ic_func Position(uint8_t pos): pos(pos) {
@@ -267,11 +268,11 @@ namespace Game {
 
     struct Move {
 
-        uint32_t hash = 255;
+        uint hash = 255;
 
         ic_func Move() = default;
 
-        ic_func Move(uint32_t a): hash(a) {
+        ic_func Move(uint a): hash(a) {
         }
 
         ic_func Move(Position p, uint8_t t) {
@@ -305,15 +306,15 @@ namespace Game {
     class Board {
     private:
         // Union Find:
-        constexpr const static uint32_t AIR  = WIDTH * HEIGHT * 2;
-        constexpr const static uint32_t WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
+        constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
+        constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
 #ifdef COLOR_BOARD
         //                                   RESET  BLUE       RED         BLUE2      RED2  GRAY (5)
         constexpr static const char* COLOR[] {"39", "38;5;17", "38;5;196", "38;5;31", "91", "38;5;240"};
 #endif
         struct UnionSet {
             uint8_t borders[2]{};
-            uint32_t size = 1;
+            uint size = 1;
             uint8_t root;
 #ifdef COLOR_BOARD
             uint8_t color = 0;
@@ -448,7 +449,7 @@ namespace Game {
         }
 
         Move randomMove(Utils::Random &rand=*Utils::RNG) const {
-            uint32_t r = rand.nextInt(_legal_moves.count()), i = 0;
+            uint r = rand.nextInt(_legal_moves.count()), i = 0;
             for (auto pos : _legal_moves) {
                 if (i++ == r) return Move(Position(pos), rand.nextInt(3)+1);
             }
@@ -461,7 +462,7 @@ namespace Game {
                 log->move = pos;
                 std::copy(_score, _score+2, log->score);
             }
-            const uint32_t j0 = pos << 1, j1 = j0 | 1u;
+            const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint8_t type = move.type();
             _state_grid.orSet(pos, type);
             _legal_moves.unset(pos);
@@ -469,12 +470,12 @@ namespace Game {
             {
                 JointPosition neighbours[4]{};
                 UnionSet* sets[] = {&_union_sets[j0], &_union_sets[j1]};
-                uint32_t counts[5]{}; // ab(=11) a = set, b = side
-                for (uint32_t i = 0; i < 4u; ++i) {
+                uint counts[5]{}; // ab(=11) a = set, b = side
+                for (uint i = 0; i < 4u; ++i) {
                     neighbours[i] = neighbour(pos, SIDES[type][i], type);
                     if (neighbours[i] == AIR) continue;
                     if (neighbours[i] < AIR) neighbours[i] = findUnion(neighbours[i], log);
-                    uint32_t set = i & 1u; // 0 1 0 1 (boolean)
+                    uint set = i & 1u; // 0 1 0 1 (boolean)
 
                     if (neighbours[i] < AIR) { // has neighbour
                         if (i & 2u) {
@@ -489,7 +490,7 @@ namespace Game {
                         }
 
                         auto border = _union_sets[neighbours[i]].borders[0]; // border is WALL value
-                        uint32_t count_index = ((i & 1u) << 1) + border - WALL[2];
+                        uint count_index = ((i & 1u) << 1) + border - WALL[2];
                         if (border > WALL[0]) { // > WALL[0] is colored wall
                             if (i & 2u &&
                                     neighbours[!(i - 2)] < AIR &&
@@ -698,7 +699,7 @@ int main() {
     Board board;
 
     Board::BoardChange changes[WIDTH * HEIGHT];
-    uint32_t i = 0;
+    uint i = 0;
     while (!board.isOver()) {
         Move m = board.randomMove();
         std::cout << (std::string)m << '\n';
@@ -725,7 +726,7 @@ int main() {
     using std::cout, std::cin, std::cerr;
 
     Move move;
-    uint32_t c = 0;
+    uint c = 0;
 
     cin >> move;
     board.play(move);
