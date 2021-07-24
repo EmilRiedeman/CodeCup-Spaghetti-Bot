@@ -391,16 +391,14 @@ namespace Game {
             b = findUnion(b, change);
             auto A = &_union_sets[a], B = &_union_sets[b];
             if (a == b) return A;
-            /*if (*B < *A) {
-                std::swap(A, B);
-                std::swap(a, b);
-            }*/
             bool bTipI = B->getTip(bTip);
             JointPosition tip = A->tips[!A->getTip(aTip)];
 
             if (change) {
-                change->union_parent_stack.emplace(a, _union_parents[a]);
-                change->union_parent_stack.emplace(tip, _union_parents[tip]);
+                if (change->union_parent_stack.empty()
+                                || change->union_parent_stack.top().joint != a)
+                    change->union_parent_stack.emplace(a, _union_parents[a]);
+                if (a != tip) change->union_parent_stack.emplace(tip, _union_parents[tip]);
                 change->union_unite_stack.emplace(*B);
             }
             _union_parents[a] = b;
@@ -473,7 +471,8 @@ namespace Game {
             const Position pos = move.pos();
             if (log) {
                 log->move = pos;
-                std::copy(_score, _score+2, log->score);
+                log->score[0] = _score[0];
+                log->score[1] = _score[1];
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint8_t type = move.type();
@@ -561,6 +560,8 @@ namespace Game {
             _game_over = false;
             _state_grid.unset(change.move);
             _legal_moves.orSet(change.move);
+            _score[0] = change.score[0];
+            _score[1] = change.score[1];
             std::copy(change.score, change.score+2, _score);
             while (!change.union_parent_stack.empty()) {
                 _union_parents[change.union_parent_stack.top().joint] = change.union_parent_stack.top().parent;
