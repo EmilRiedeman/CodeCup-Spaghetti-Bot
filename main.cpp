@@ -400,7 +400,7 @@ namespace Game {
 
             if (change) {
                 change->union_parent_stack.emplace(a, _union_parents[a]);
-                change->union_parent_stack.emplace(tip, _union_parents[tip]);
+                if (a != tip) change->union_parent_stack.emplace(tip, _union_parents[tip]);
                 change->union_unite_stack.emplace(*B);
             }
             _union_parents[a] = b;
