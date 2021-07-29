@@ -1,7 +1,6 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
-#include <cstring>
 #include <stack>
 #include <vector>
 
@@ -14,6 +13,8 @@ typedef uint32_t uint;
 inline std::ostream &operator<<(std::ostream &out, unsigned char c) {
     return out << (int)c;
 }
+
+//#define COLOR_BOARD
 
 namespace Utils {
 
@@ -190,7 +191,7 @@ namespace Game {
         }
     }
 
-    static const constexpr int TRANSFORMATIONS[] {
+    static const constexpr int TRANSLATIONS[] {
     //  UP DOWN LEFT RIGHT
         -(int)WIDTH,
          WIDTH,
@@ -221,8 +222,8 @@ namespace Game {
             return pos / WIDTH;
         }
 
-        ic_func Position &transform(Direction d) {
-            pos += TRANSFORMATIONS[d];
+        ic_func Position &translate(Direction d) {
+            pos += TRANSLATIONS[d];
             return *this;
         }
 
@@ -302,7 +303,6 @@ namespace Game {
         }
     };
 
-#define COLOR_BOARD
     class Board {
     public:
 #ifdef COLOR_BOARD
@@ -381,9 +381,9 @@ namespace Game {
             return p;
         }
 
-        const_ic_func uint8_t findConstUnion(uint8_t pos) const {
+        const_ic_func uint8_t findUnionConst(uint8_t pos) const {
             if (_union_parents[pos] == pos) return pos;
-            return findConstUnion(_union_parents[pos]);
+            return findUnionConst(_union_parents[pos]);
         }
 
         ic_func UnionSet* unite(JointPosition aTip, uint8_t b, JointPosition bTip, BoardChange* change) {
@@ -414,12 +414,13 @@ namespace Game {
 
         TwoBitArray<WIDTH * HEIGHT> _state_grid;
         int _score[2]{50, 50};
+        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2 * HEIGHT]{};
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
         const_ic_func JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
-            return getJoint(p.transform(d), !d);
+            return getJoint(p.translate(d), !d);
         }
     public:
 
@@ -433,13 +434,14 @@ namespace Game {
         static const constexpr uint8_t ORIENTATIONS[][4] {
         //  UP DOWN LEFT RIGHT
             {},
-            {0, 1, 1, 0},
-            {0, 0, 1, 1},
-            {1, 0, 1, 0}
+            {0, 1, 1, 0},// r
+            {0, 0, 1, 1},// s
+            {1, 0, 1, 0},// l
         };
 
         Board() {
-            for (uint8_t i = 0; i < AIR; ++i) {
+            for (uint i = 0; i < AIR; ++i) {
+                if (i < HEIGHT * 2) _potential_score[i] = 1;
                 _union_sets[i].root = _union_parents[i] = i;
                 _union_sets[i].reset();
             }
@@ -482,47 +484,62 @@ namespace Game {
             {
                 JointPosition neighbours[4]{};
                 UnionSet* sets[] = {&_union_sets[j0], &_union_sets[j1]};
-                uint counts[5]{}; // ab(=11) a = set, b = side
+                uint counts[5]{}; // 2-bit index: bit2 = set, bit1 = side; index 4 is extra count
+                uint set;
                 for (uint i = 0; i < 4u; ++i) {
                     const JointPosition neigh = neighbour(pos, SIDES[type][i]);
                     neighbours[i] = neigh;
                     if (neighbours[i] == AIR) continue;
                     if (neighbours[i] < AIR) neighbours[i] = findUnion(neighbours[i], log);
-                    uint set = i & 1u; // 0 1 0 1 (boolean)
+                    set = i & 1u; // 0 1 0 1 (boolean)
 
                     if (neighbours[i] < AIR) { // has neighbour
                         if (i & 2u) {
                             if (neighbours[i-2] < AIR && neighbours[i] == sets[set]->root) {
                                 // cycle
                                 _score[_turn] -= 5;
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = 3 + _turn;
-#endif
+                                #endif
                                 continue;
                             }
                         }
 
                         auto border = _union_sets[neighbours[i]].borders[0]; // border is WALL value
                         uint count_index = ((i & 1u) << 1) + border - WALL[2];
-                        if (border > WALL[0]) { // > WALL[0] is colored wall
+                        if (border > WALL[0]) { // > WALL[0] is blue/red wall
                             if (i & 2u &&
-                                    neighbours[!(i - 2)] < AIR &&
-                                    neighbours[i] == sets[!set]->root) {
+                                    neighbours[(i ^ 1u) & 1u] < AIR &&
+                                    neighbours[i] == sets[set ^ 1u]->root) {
                                 counts[4] = _union_sets[neighbours[i]].size - counts[count_index ^ 2u] - 1;
                             } else counts[count_index] = _union_sets[neighbours[i]].size;
                         } else if (!set) counts[4] = _union_sets[neighbours[i]].size;
 
                         sets[set] = unite(j0 | set, neighbours[i], neigh, log);
                     } else sets[set]->handleBorder(neighbours[i]);
-
+/*
+                    if (!(i & 2u)) {
+                        for (auto tip : sets[set]->tips) {
+                            Position p = tip.pos();
+                            uint x = p.x(), y = p.y();
+                            if (!x) {
+                                ++_potential_score[y];
+                                ++_potential_score_sum[0];
+                            } else if (x == WIDTH-1) {
+                                ++_potential_score[y + HEIGHT];
+                                ++_potential_score_sum[1];
+                            }
+                        }
+                    }
+*/
                     if (sets[set]->enclosed()) {
                         if (sets[set]->borders[0] != WALL[0]) {
                             if (sets[set]->borders[0] == sets[set]->borders[1]) {
                                 // connected color with same color
                                 _score[_turn] -= 3;
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = 3 + _turn;
-#endif
+                                #endif
                             } else if (sets[set]->borders[1] != WALL[0]) {
                                 // connected to other side
                                 _score[_turn] += static_cast<int>((sets[0] == sets[1]) ?
@@ -531,23 +548,22 @@ namespace Game {
                                                  );
 #ifdef COLOR_BOARD
                                 sets[set]->color = _turn + 1;
+                            } else sets[set]->color = 5;
+                        } else sets[set]->color = 5;
+#else
+                        }}
 #endif
-                            } else {
-#ifdef COLOR_BOARD
-                                sets[set]->color = 5;
-#endif
-                            }
-                        } else {
-#ifdef COLOR_BOARD
-                            sets[set]->color = 5;
-#endif
-                        }
-                    }
-#ifdef COLOR_BOARD
-                    else if (sets[set]->borders[0] == WALL[0])
+                    } else if (sets[set]->borders[0] == WALL[0]) {
+                        #ifdef COLOR_BOARD
                         sets[set]->color = 5;
-#endif
+                        #endif
+                        //
+                    }
                 }
+            }
+
+            for (uint y = 0; y < HEIGHT; ++y) {
+                // todo potential score
             }
 
             _game_over = !_legal_moves;
@@ -583,10 +599,10 @@ namespace Game {
             constexpr const uint8_t box_width = 5, box_height = 3;
             constexpr const bool grid = false, dots_only = false;
             char r[WIDTH * box_width][HEIGHT * box_height];
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             std::string colors[WIDTH * box_width][HEIGHT * box_height]{};
             constexpr const char* BG = "\033[49m";
-#endif
+            #endif
             for (uint8_t y = 0; y < HEIGHT*box_height; ++y) {
                 for (auto & x : r) {
                     x[y] = ' ';
@@ -599,12 +615,12 @@ namespace Game {
 
                     r[x * box_width][y * box_height + 1] = '-';
                     r[x * box_width + 4][y * box_height + 1] = '-';
-#ifdef COLOR_BOARD
+                    #ifdef COLOR_BOARD
                     colors[x * box_width][y * box_height + 1] = COLOR[_union_sets[findConstUnion(getJoint(Position(x, y), LEFT))].color];
                     colors[x * box_width + 4][y * box_height + 1] = COLOR[_union_sets[findConstUnion(getJoint(Position(x, y), RIGHT))].color];
                     auto c0 = COLOR[_union_sets[findConstUnion(JointPosition(Position(x, y), false))].color];
                     auto c1 = COLOR[_union_sets[findConstUnion(JointPosition(Position(x, y), true))].color];
-#endif
+                    #endif
                     switch (type) {
                         case 2:
                             r[x * box_width + 2][y * box_height + 1] = '+';
@@ -613,51 +629,51 @@ namespace Game {
                             r[x * box_width + 2][y * box_height + 2] = '|';
                             r[x * box_width + 3][y * box_height + 1] = '-';
                             r[x * box_width + 1][y * box_height + 1] = '-';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             if (std::strcmp(c0, "0") != 0) colors[x * box_width + 2][y * box_height + 1] += c0;
                             else colors[x * box_width + 2][y * box_height + 1] += c1;
                             colors[x * box_width + 2][y * box_height] = c0;
                             colors[x * box_width + 2][y * box_height + 2] = c0;
                             colors[x * box_width + 3][y * box_height + 1] = c1;
                             colors[x * box_width + 1][y * box_height + 1] = c1;
-#endif
+                            #endif
                             break;
                         case 3:
                             r[x * box_width + 1][y * box_height] = '/';
                             r[x * box_width + 3][y * box_height + 2] = '/';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             colors[x * box_width + 1][y * box_height] = c1;
                             colors[x * box_width + 3][y * box_height + 2] = c0;
-#endif
+                            #endif
                             break;
                         case 1:
                             r[x * box_width + 1][y * box_height + 2] = '\\';
                             r[x * box_width + 3][y * box_height] = '\\';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             colors[x * box_width + 1][y * box_height + 2] = c1;
                             colors[x * box_width + 3][y * box_height] = c0;
-#endif
+                            #endif
                             break;
                         default:
                             continue;
                     }
                 }
             }
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             out << BG;
-#endif
+            #endif
             out << "   ";
             for (uint8_t x = 0; x < WIDTH; ++x) {
                 out << std::string(box_width/2+1, ' ') << char(x+'a') << std::string(box_width/2-!grid, ' ');
             }
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             out << "\033[49m";
-#endif
+            #endif
             out << "\n";
             for (uint8_t y = 0;; ++y) {
-#ifdef COLOR_BOARD
+                #ifdef COLOR_BOARD
                 out << BG;
-#endif
+                #endif
                 if (y % box_height == box_height/2) out << ' ' << char((y/box_height) + 'a') << ' ';
                 else out << "   ";
                 if (!(y % box_height) && (grid || y == HEIGHT * box_height || !y)) {
@@ -666,37 +682,37 @@ namespace Game {
                         out << std::string(box_width, !(y == HEIGHT * box_height || !y) && dots_only? ' ': '-');
                     }
                     out << '+';
-#ifdef COLOR_BOARD
-                out << "\033[49m";
-#endif
+                    #ifdef COLOR_BOARD
+                    out << "\033[49m";
+                    #endif
                     out << '\n';
-#ifdef COLOR_BOARD
-                out << BG;
-#endif
+                    #ifdef COLOR_BOARD
+                    out << BG;
+                    #endif
                     out << "   ";
                 }
                 if (y == HEIGHT * box_height) break;
                 for (uint8_t x = 0; x < WIDTH*box_width; ++x) {
                     if (!(x % box_width) && (grid || !x)){
-#ifdef COLOR_BOARD
+                        #ifdef COLOR_BOARD
                         if (!x) out << std::string() + "\033[" + COLOR[1] + "m|\033[39m";
                         else
-#endif
+                        #endif
                         out << (!(x == WIDTH * box_width || !x) && dots_only? ' ': '|');
                     }
-#ifdef COLOR_BOARD
+                    #ifdef COLOR_BOARD
                     out << std::string() + "\033[" + colors[x][y] + "m";
-#endif
+                    #endif
                     out << r[x][y];
-#ifdef COLOR_BOARD
+                    #ifdef COLOR_BOARD
                     out << "\033[39m";
-#endif
+                    #endif
                 }
-#ifdef COLOR_BOARD
+                #ifdef COLOR_BOARD
                 out << std::string() + "\033[" + COLOR[2] + "m|\033[0m";
-#else
+                #else
                 out << '|';
-#endif
+                #endif
                 out << '\n';
             }
             std::string score[] = {std::to_string(_score[0]), std::to_string(_score[1])};
@@ -708,11 +724,30 @@ namespace Game {
     };
 }
 
+namespace MoveFinder {
+    class Agent {
+    public:
+        virtual Game::Move suggest() = 0;
+    };
+    class MinimaxAgent: public Agent {
+    public:
+        template <typename T>
+        T minimax(uint depth, bool maximizing=true) {
+            T best = T(maximizing);
+            return best;
+        }
+
+        Game::Move suggest() override {
+            return {};
+        }
+    };
+}
+
 int main() {
     Utils::Random::init();
     using namespace Game;
     Board board;
-
+/*
     Board::BoardChange changes[WIDTH * HEIGHT];
     uint i = 0;
     while (!board.isOver()) {
@@ -737,7 +772,7 @@ int main() {
         board.print(std::cout);
     }
 
-    return 0;
+    return 0;*/
     using std::cout, std::cin, std::cerr;
 
     Move move;
