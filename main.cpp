@@ -276,7 +276,7 @@ namespace Game {
         ic_func Move(uint a): hash(a) {
         }
 
-        ic_func Move(Position p, uint8_t t) {
+        ic_func Move(Position p, uint t) {
             hash = p | (t << 6);
         }
 
@@ -363,7 +363,8 @@ namespace Game {
             };
 
             Position move;
-            int score[2]{50, 50};
+            int score[2]{};
+            uint p_score[2]{};
             std::stack<UnionParentChange, std::vector<UnionParentChange>> union_parent_stack;
             std::stack<UnionSet, std::vector<UnionSet>> union_unite_stack;
 
@@ -414,7 +415,7 @@ namespace Game {
 
         TwoBitArray<WIDTH * HEIGHT> _state_grid;
         int _score[2]{50, 50};
-        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2 * HEIGHT]{};
+        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}/*, _potential_score[2 * HEIGHT]{}*/;
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
@@ -441,7 +442,7 @@ namespace Game {
 
         Board() {
             for (uint i = 0; i < AIR; ++i) {
-                if (i < HEIGHT * 2) _potential_score[i] = 1;
+                //if (i < HEIGHT * 2) _potential_score[i] = 1;
                 _union_sets[i].root = _union_parents[i] = i;
                 _union_sets[i].reset();
             }
@@ -449,6 +450,14 @@ namespace Game {
 
         const_ic_func int getScore(bool s) const {
             return _score[s];
+        }
+
+        const_ic_func uint getPotentialScore(bool s) const {
+            return _potential_score_sum[s];
+        }
+
+        const_ic_func BitSet64 getLegalMoves() const {
+            return _legal_moves;
         }
 
         const_ic_func int getTurn() const {
@@ -475,6 +484,8 @@ namespace Game {
                 log->move = pos;
                 log->score[0] = _score[0];
                 log->score[1] = _score[1];
+                log->p_score[0] = _potential_score_sum[0];
+                log->p_score[1] = _potential_score_sum[1];
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint8_t type = move.type();
@@ -506,7 +517,7 @@ namespace Game {
                         }
 
                         auto border = _union_sets[neighbours[i]].borders[0]; // border is WALL value
-                        uint count_index = ((i & 1u) << 1) + border - WALL[2];
+                        uint count_index = ((i & 1u) << 1) | (border - WALL[2]);
                         if (border > WALL[0]) { // > WALL[0] is blue/red wall
                             if (i & 2u &&
                                     neighbours[(i ^ 1u) & 1u] < AIR &&
@@ -517,21 +528,7 @@ namespace Game {
 
                         sets[set] = unite(j0 | set, neighbours[i], neigh, log);
                     } else sets[set]->handleBorder(neighbours[i]);
-/*
-                    if (!(i & 2u)) {
-                        for (auto tip : sets[set]->tips) {
-                            Position p = tip.pos();
-                            uint x = p.x(), y = p.y();
-                            if (!x) {
-                                ++_potential_score[y];
-                                ++_potential_score_sum[0];
-                            } else if (x == WIDTH-1) {
-                                ++_potential_score[y + HEIGHT];
-                                ++_potential_score_sum[1];
-                            }
-                        }
-                    }
-*/
+
                     if (sets[set]->enclosed()) {
                         if (sets[set]->borders[0] != WALL[0]) {
                             if (sets[set]->borders[0] == sets[set]->borders[1]) {
@@ -546,24 +543,36 @@ namespace Game {
                                                     (counts[_turn] | counts[_turn + 2]) + counts[4] + 2 : // edge case
                                                     counts[(set << 1) | _turn] + 1 // normal case
                                                  );
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = _turn + 1;
                             } else sets[set]->color = 5;
                         } else sets[set]->color = 5;
-#else
+                        #else
                         }}
-#endif
+                        #endif
                     } else if (sets[set]->borders[0] == WALL[0]) {
                         #ifdef COLOR_BOARD
                         sets[set]->color = 5;
                         #endif
-                        //
+                        // todo in this loop potential score update
                     }
                 }
             }
 
-            for (uint y = 0; y < HEIGHT; ++y) {
-                // todo potential score
+            _potential_score_sum[0] = _potential_score_sum[1] = 0;
+            for (uint side : {0u, 1u}) {
+                auto d = static_cast<Direction>(side + 2);
+                for (uint p = side * (WIDTH-1); p < WIDTH * HEIGHT; p+=WIDTH) {
+                    auto joint = getJoint(p, d);
+                    if (joint == AIR) {
+                        ++_potential_score_sum[side];
+                        continue;
+                    }
+                    const UnionSet &set = _union_sets[findUnion(p, log)];
+                    if (!set.enclosed()) {
+                        _potential_score_sum[side] += set.size+1;
+                    }
+                }
             }
 
             _game_over = !_legal_moves;
@@ -578,6 +587,8 @@ namespace Game {
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
             _score[1] = change.score[1];
+            _potential_score_sum[0] = change.p_score[0];
+            _potential_score_sum[1] = change.p_score[1];
             std::copy(change.score, change.score+2, _score);
             while (!change.union_parent_stack.empty()) {
                 _union_parents[change.union_parent_stack.top().joint] = change.union_parent_stack.top().parent;
@@ -725,20 +736,115 @@ namespace Game {
 }
 
 namespace MoveFinder {
-    class Agent {
+    class MoveController {
+    protected:
+        Game::Board &board;
+        const bool side;
+        MoveController(Game::Board &board, bool side): board(board), side(side) {}
     public:
         virtual Game::Move suggest() = 0;
     };
-    class MinimaxAgent: public Agent {
-    public:
-        template <typename T>
-        T minimax(uint depth, bool maximizing=true) {
-            T best = T(maximizing);
-            return best;
+
+    namespace BoardEvaluation {
+        struct PotentialScore {
+            int score;
+            int p_score;
+
+            ic_func explicit PotentialScore(bool maximizing):
+                    score(maximizing? INT32_MIN: INT32_MAX),
+                    p_score(maximizing? INT32_MIN: INT32_MAX) {}
+
+            PotentialScore(const Game::Board &b, bool side):
+                    score(2*b.getScore(side)-b.getScore(!side)),
+                    p_score(2*(int)b.getPotentialScore(side)-(int)b.getPotentialScore(!side)) {}
+
+            PotentialScore() = default;
+            PotentialScore(const PotentialScore&) = default;
+
+
+            const_ic_func bool operator>=(const PotentialScore &o) const {
+                return score > o.score || (score == o.score && p_score >= o.p_score);
+            }
+
+            const_ic_func bool operator<(const PotentialScore &o) const {
+                return !operator>=(o);
+            }
+        };
+    }
+
+    template <typename T>
+    T minimax(
+            Game::Board &board,
+            bool side,
+            uint depth,
+            bool maximizing=true,
+            T alpha=T{false}, T beta=T{true}
+            ) {
+        typedef T Evaluation;
+        if (!depth || board.isOver()) {
+            return {board, side};
         }
+        Evaluation best(maximizing);
+        Game::Board::BoardChange undo;
+        for (auto pos : board.getLegalMoves()) {
+            for (uint t = 1; t < 4; ++t) {
+                board.play({(uint8_t)pos, t}, &undo);
+                Evaluation next = minimax(board, side, depth-1, !maximizing, alpha, beta);
+                board.undo(undo);
+
+                if (maximizing) {
+                    if (best < next) {
+                        best = next;
+                        if (best >= beta) break;
+                        if (best < alpha) alpha = best;
+                    }
+                } else {
+                    if (next < best) {
+                        best = next;
+                        if (alpha >= best) break;
+                        if (beta < best) beta = best;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    template <typename EVALUATOR=BoardEvaluation::PotentialScore>
+    class MinimaxMoveController: public MoveController {
+    public:
+        typedef EVALUATOR Evaluation;
+
+        uint depth = 2;
+
+        MinimaxMoveController(Game::Board &board, bool side): MoveController(board, side) {}
 
         Game::Move suggest() override {
-            return {};
+            if (board.getLegalMoves().count() == 50) depth = 3;
+            if (board.getLegalMoves().count() == 20) depth = 10;
+            if (board.getLegalMoves().count() == 12) depth = 12;
+            Evaluation bestScore(true), alpha(false);
+            Game::Move moves[60];
+            uint size = 0;
+            Game::Board::BoardChange undo;
+            for (auto pos : board.getLegalMoves()) {
+                for (uint t = 1; t < 4; ++t) {
+                    Game::Move m(pos, t);
+                    board.play({(uint8_t)pos, t}, &undo);
+                    auto next = minimax<Evaluation>(board, side, depth-1, false);
+                    board.undo(undo);
+
+                    if (next >= bestScore) {
+                        if (bestScore < next) {
+                            bestScore = next;
+                            size = 0;
+                        }
+                        moves[size++] = m;
+                        if (bestScore < alpha) alpha = bestScore;
+                    }
+                }
+            }
+            return moves[Utils::RNG->nextInt(size)];
         }
     };
 }
@@ -791,13 +897,14 @@ int main() {
 
         c++;
     }
+    auto minimax = new MoveFinder::MinimaxMoveController<MoveFinder::BoardEvaluation::PotentialScore>(board, board.getTurn());
     const bool side = board.getTurn();
 
     while (!board.isOver()) {
-        cerr << ++c << ": " << board.getScore(0) << ' ' << board.getScore(1) << '\n';
-        if (c >= WIDTH * HEIGHT - 10) board.print(cerr) << '\n';
+        //cerr << ++c << ": " << board.getScore(0) << ' ' << board.getScore(1) << '\n';
+        //if (c >= WIDTH * HEIGHT - 63) board.print(cerr) << '\n';
         if (side == board.getTurn()) {
-            move = board.randomMove();
+            move = minimax->suggest();
             cout << (std::string)move << std::endl;
         } else {
             cin >> move;
