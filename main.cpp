@@ -327,12 +327,12 @@ namespace Game {
 
             ic_func UnionSet& operator=(UnionSet&&) noexcept = default;
 
-            const_ic_func bool getTip(JointPosition tip) const {
+            const_ic_func bool getTip(JointPosition tip) const { // todo check other way around false-true?
                 if (tips[0] == tip) return true;
                 return false;
             }
 
-            ic_func void handleBorder(uint8_t border) {
+            ic_func void handleBorder(uint8_t border) { // todo tip
                 if (!borders[0]) borders[0] = border;
                 else borders[1] = border;
             }
@@ -415,13 +415,24 @@ namespace Game {
 
         TwoBitArray<WIDTH * HEIGHT> _state_grid;
         int _score[2]{50, 50};
-        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}/*, _potential_score[2 * HEIGHT]{}*/;
+        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2][HEIGHT]{};
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
         const_ic_func JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
             return getJoint(p.translate(d), !d);
+        }
+
+        ic_func void setPotentialScore(bool side, uint y, uint value) {
+            _potential_score_sum[side] += value - _potential_score[side][y];
+            _potential_score[side][y] = value;
+        }
+
+        const_ic_func bool getBorderTip(UnionSet &set, Direction border) const {
+            auto pos = set.tips[0].pos();
+            if (pos.isBorder(border) && ORIENTATIONS[_state_grid.get(pos)][border] == set.tips[0].orientation()) return false;
+            return true;
         }
     public:
 
@@ -467,13 +478,13 @@ namespace Game {
         const_ic_func JointPosition getJoint(Position p, Direction dir) const {
             uint8_t t = _state_grid.get(p);
             if (!t) return AIR;
-            return JointPosition(p, ORIENTATIONS[t][dir]);
+            return {p, static_cast<bool>(ORIENTATIONS[t][dir])};
         }
 
         Move randomMove(Utils::Random &rand=*Utils::RNG) const {
             uint r = rand.nextInt(_legal_moves.count()), i = 0;
             for (auto pos : _legal_moves) {
-                if (i++ == r) return Move(Position(pos), rand.nextInt(3)+1);
+                if (i++ == r) return {Position(pos), rand.nextInt(3)+1};
             }
             return {0u};
         }
@@ -554,7 +565,19 @@ namespace Game {
                         #ifdef COLOR_BOARD
                         sets[set]->color = 5;
                         #endif
-                        // todo in this loop potential score update
+                    }
+                }
+                for (set = 0; set < 2; ++set) {
+                    auto s = sets[set];
+                    if (set && sets[0] == sets[1]) break;
+                    if (s->borders[0]) {
+                        if (s->enclosed()) {
+
+                        } else {
+                            if (s->borders[0] != WALL[0]) {
+                                setPotentialScore(); // todo
+                            }
+                        }
                     }
                 }
             }
