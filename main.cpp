@@ -6,6 +6,8 @@
 
 typedef uint_fast8_t uint8_t;
 typedef uint32_t uint;
+template <typename T>
+using vector_stack = std::stack<T, std::vector<T>>;
 
 #define ic_func inline constexpr
 #define const_ic_func [[nodiscard]] ic_func
@@ -63,7 +65,7 @@ namespace Utils {
         }
 
         static inline void init() {
-            RNG = new Random();
+            RNG = new Random(1200565796);
             std::cerr << *RNG << '\n';
         }
     };
@@ -130,6 +132,37 @@ namespace Utils {
                 return a != o.a;
             }
         };
+
+        struct reverse_iterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type        = uint;
+
+            uint64_t a;
+            uint r;
+            ic_func reverse_iterator(const BitSet64 &b): a(b.word), r(__builtin_clzll(b.word)) {
+            }
+
+            ic_func void operator++() {
+                a ^= (1ull << r);
+                r = __builtin_clzll(a);
+            }
+
+            ic_func uint operator*() const {
+                return r;
+            }
+
+            ic_func bool operator!=(const iterator &o) const {
+                return a != o.a;
+            }
+        };
+
+        const_ic_func reverse_iterator rbegin() const {
+            return {*this};
+        }
+
+        const_ic_func reverse_iterator rend() const {
+            return {0};
+        }
 
         const_ic_func iterator begin() const {
             return {word};
@@ -236,6 +269,10 @@ namespace Game {
                 default: return true;
             }
         }
+
+        explicit operator std:: string() const {
+            return std::string{char(y() + 'a'), char(x() + 'a')};
+        }
     };
 
     struct JointPosition {
@@ -284,7 +321,7 @@ namespace Game {
         }
 
         explicit operator std:: string() const {
-            return std::string{char(pos().y() + 'a'), char(pos().x() + 'a'), char(type() == 3? 'l': type() == 2? 's': 'r')};
+            return (std::string)pos() + char(type() == 3? 'l': type() == 2? 's': 'r');
         }
 
         friend std::istream &operator>>(std::istream &in, Move &move) {
@@ -313,6 +350,9 @@ namespace Game {
         // Union Find:
         constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
         constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
+        const_ic_func static Direction getWallDirection(uint wallValue) {
+            return static_cast<Direction>(wallValue - WALL[0] + 1);
+        }
         struct UnionSet {
             uint8_t borders[2]{};
             JointPosition tips[2]{}, root = -1;
@@ -327,12 +367,11 @@ namespace Game {
 
             ic_func UnionSet& operator=(UnionSet&&) noexcept = default;
 
-            const_ic_func bool getTip(JointPosition tip) const { // todo check other way around false-true?
-                if (tips[0] == tip) return true;
-                return false;
+            const_ic_func bool getTip(JointPosition tip) const {
+                return tips[0] != tip;
             }
 
-            ic_func void handleBorder(uint8_t border) { // todo tip
+            ic_func void handleBorder(uint8_t border) {
                 if (!borders[0]) borders[0] = border;
                 else borders[1] = border;
             }
@@ -354,7 +393,7 @@ namespace Game {
 
     public:
         struct BoardChange {
-            struct UnionParentChange {
+            struct UnionParentChange { // todo pair
                 JointPosition joint;
                 uint8_t parent;
 
@@ -364,9 +403,9 @@ namespace Game {
 
             Position move;
             int score[2]{};
-            uint p_score[2]{};
-            std::stack<UnionParentChange, std::vector<UnionParentChange>> union_parent_stack;
-            std::stack<UnionSet, std::vector<UnionSet>> union_unite_stack;
+            vector_stack<UnionParentChange> union_parent_stack;
+            vector_stack<UnionSet> union_unite_stack;
+            vector_stack<std::pair<uint, uint>> p_score_stack;
 
             BoardChange() = default;
         };
@@ -424,7 +463,8 @@ namespace Game {
             return getJoint(p.translate(d), !d);
         }
 
-        ic_func void setPotentialScore(bool side, uint y, uint value) {
+        ic_func void setPotentialScore(bool side, uint y, uint value, BoardChange* log) {
+            if (log) log->p_score_stack.emplace(y + side*HEIGHT, _potential_score[side][y]);
             _potential_score_sum[side] += value - _potential_score[side][y];
             _potential_score[side][y] = value;
         }
@@ -453,7 +493,7 @@ namespace Game {
 
         Board() {
             for (uint i = 0; i < AIR; ++i) {
-                //if (i < HEIGHT * 2) _potential_score[i] = 1;
+                if (i < HEIGHT) _potential_score[0][i] = _potential_score[1][i] = 1;
                 _union_sets[i].root = _union_parents[i] = i;
                 _union_sets[i].reset();
             }
@@ -495,8 +535,6 @@ namespace Game {
                 log->move = pos;
                 log->score[0] = _score[0];
                 log->score[1] = _score[1];
-                log->p_score[0] = _potential_score_sum[0];
-                log->p_score[1] = _potential_score_sum[1];
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint8_t type = move.type();
@@ -572,47 +610,51 @@ namespace Game {
                     if (set && sets[0] == sets[1]) break;
                     if (s->borders[0]) {
                         if (s->enclosed()) {
-
+                            bool i;
+                            if (s->borders[0] != WALL[0]) {
+                                auto border = getWallDirection(s->borders[0]);
+                                i = getBorderTip(*s, border);
+                                setPotentialScore(border == RIGHT, s->tips[i].pos().y(), 0, log);
+                            } else if (s->borders[1] != WALL[0])
+                                i = !getBorderTip(*s, getWallDirection(s->borders[1]));
+                            if (s->borders[1] != WALL[0]) {
+                                setPotentialScore(WALL[3] == s->borders[1], s->tips[!i].pos().y(), 0, log);
+                            }
                         } else {
                             if (s->borders[0] != WALL[0]) {
-                                setPotentialScore(); // todo
+                                auto border = static_cast<Direction>(s->borders[0] - WALL[0] + 1);
+                                bool i = getBorderTip(*s, border);
+                                setPotentialScore(border == RIGHT, s->tips[i].pos().y(), s->size + 1, log);
                             }
                         }
                     }
                 }
-            }
-
-            _potential_score_sum[0] = _potential_score_sum[1] = 0;
-            for (uint side : {0u, 1u}) {
-                auto d = static_cast<Direction>(side + 2);
-                for (uint p = side * (WIDTH-1); p < WIDTH * HEIGHT; p+=WIDTH) {
-                    auto joint = getJoint(p, d);
-                    if (joint == AIR) {
-                        ++_potential_score_sum[side];
-                        continue;
-                    }
-                    const UnionSet &set = _union_sets[findUnion(p, log)];
-                    if (!set.enclosed()) {
-                        _potential_score_sum[side] += set.size+1;
-                    }
+                if (!log) {
+                    std::cerr << _potential_score_sum[0] << " " << _potential_score_sum[1] << "\n";
+                    for (uint i = 0; i < HEIGHT; ++i)
+                        std::cerr << _potential_score[0][i] << ' ' << _potential_score[1][i] << '\n';
+                    std::cerr << std::endl;
                 }
             }
-
             _game_over = !_legal_moves;
             _turn = !_turn;
+
+            if (!log) print(std::cerr);
         }
 
         void undo(BoardChange &change) {
-            // todo test
             _turn = !_turn;
             _game_over = false;
             _state_grid.unset(change.move);
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
             _score[1] = change.score[1];
-            _potential_score_sum[0] = change.p_score[0];
-            _potential_score_sum[1] = change.p_score[1];
             std::copy(change.score, change.score+2, _score);
+            while (!change.p_score_stack.empty()) {
+                uint i = change.p_score_stack.top().first;
+                setPotentialScore(i >= HEIGHT, i % HEIGHT, change.p_score_stack.top().second, nullptr);
+                change.p_score_stack.pop();
+            }
             while (!change.union_parent_stack.empty()) {
                 _union_parents[change.union_parent_stack.top().joint] = change.union_parent_stack.top().parent;
                 change.union_parent_stack.pop();
@@ -771,15 +813,15 @@ namespace MoveFinder {
     namespace BoardEvaluation {
         struct PotentialScore {
             int score;
-            int p_score;
+            uint p_score;
 
             ic_func explicit PotentialScore(bool maximizing):
                     score(maximizing? INT32_MIN: INT32_MAX),
-                    p_score(maximizing? INT32_MIN: INT32_MAX) {}
+                    p_score(maximizing? 0: UINT32_MAX) {}
 
             PotentialScore(const Game::Board &b, bool side):
-                    score(2*b.getScore(side)-b.getScore(!side)),
-                    p_score(2*(int)b.getPotentialScore(side)-(int)b.getPotentialScore(!side)) {}
+                    score(b.getScore(side)),
+                    p_score(b.getPotentialScore(side)) {}
 
             PotentialScore() = default;
             PotentialScore(const PotentialScore&) = default;
@@ -838,23 +880,27 @@ namespace MoveFinder {
     public:
         typedef EVALUATOR Evaluation;
 
-        uint depth = 2;
+        uint depth = 3;
 
         MinimaxMoveController(Game::Board &board, bool side): MoveController(board, side) {}
 
         Game::Move suggest() override {
-            if (board.getLegalMoves().count() == 50) depth = 3;
-            if (board.getLegalMoves().count() == 20) depth = 10;
-            if (board.getLegalMoves().count() == 12) depth = 12;
+            uint count = board.getLegalMoves().count();
+            if (count == 50) depth = 5;
+            if (count == 20) depth = 6;
+            if (count == 10) depth = 8;
+            if (count == 7) depth = 7;
             Evaluation bestScore(true), alpha(false);
-            Game::Move moves[60];
+            Game::Move moves[count * 3];
             uint size = 0;
             Game::Board::BoardChange undo;
+            //std::cerr << "WORD: " << board.getLegalMoves().word << '\n';
             for (auto pos : board.getLegalMoves()) {
+                //std::cerr << (std::string)Game::Position(pos) << ',';
                 for (uint t = 1; t < 4; ++t) {
                     Game::Move m(pos, t);
-                    board.play({(uint8_t)pos, t}, &undo);
-                    auto next = minimax<Evaluation>(board, side, depth-1, false);
+                    board.play(m, &undo);
+                    auto next = minimax<Evaluation>(board, side, depth-1, false, alpha);
                     board.undo(undo);
 
                     if (next >= bestScore) {
@@ -867,7 +913,16 @@ namespace MoveFinder {
                     }
                 }
             }
-            return moves[Utils::RNG->nextInt(size)];
+            uint i = Utils::RNG->nextInt(size);
+            /*
+            std::cerr << '\n';
+            for (uint j = 0; j < size; ++j) {
+                std::cerr << j << ":" << (std::string)moves[j] << ',';
+            }
+            std::cerr << '\n';
+            std::cerr << i << ' ' << size << '\n';
+             */
+            return moves[i];
         }
     };
 }
