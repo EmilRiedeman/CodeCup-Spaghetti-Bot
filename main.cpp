@@ -1,12 +1,15 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
-#include <cstring>
 #include <stack>
 #include <vector>
+#include <cstring>
 
-typedef uint_fast8_t uint8_t;
+typedef uint_fast8_t uint8;
 typedef uint32_t uint;
+
+template <typename T>
+using vector_stack = std::stack<T, std::vector<T>>;
 
 #define ic_func inline constexpr
 #define const_ic_func [[nodiscard]] ic_func
@@ -14,6 +17,8 @@ typedef uint32_t uint;
 inline std::ostream &operator<<(std::ostream &out, unsigned char c) {
     return out << (int)c;
 }
+
+//#define COLOR_BOARD
 
 namespace Utils {
 
@@ -62,7 +67,7 @@ namespace Utils {
         }
 
         static inline void init() {
-            RNG = new Random();
+            RNG = new Random(1200565796);
             std::cerr << *RNG << '\n';
         }
     };
@@ -74,16 +79,16 @@ namespace Utils {
         ic_func BitSet64() = default;
         ic_func BitSet64(uint64_t word): word(word) {}
 
-        const_ic_func bool get(uint8_t index) const {
+        const_ic_func bool get(uint index) const {
             return (1ull << index) & word;
         }
 
-        ic_func BitSet64& orSet(uint8_t index) {
+        ic_func BitSet64& orSet(uint index) {
             word |= (1ull << index);
             return *this;
         }
 
-        ic_func void unset(uint8_t index) {
+        ic_func void unset(uint index) {
             word &= ~(1ull << index);
         }
 
@@ -95,6 +100,10 @@ namespace Utils {
             return word | o.word;
         }
 
+        ic_func BitSet64 operator&(const BitSet64 &o) const {
+            return word & o.word;
+        }
+
         ic_func explicit operator bool() const {
             return word;
         }
@@ -104,12 +113,22 @@ namespace Utils {
             return *this;
         }
 
+        ic_func BitSet64 &operator<<=(uint x) {
+            word <<= x;
+            return *this;
+        }
+
+        ic_func BitSet64 &operator>>=(uint x) {
+            word >>= x;
+            return *this;
+        }
+
         const_ic_func BitSet64 operator^(const BitSet64 &o) const {
             return word ^ o.word;
         }
 
         template <typename T>
-        const_ic_func T sub(uint8_t pos, uint8_t count) const {
+        const_ic_func T sub(uint pos, uint count) const {
             return (T)((word >> pos) & ((1ull << count) - 1ull));
         }
 
@@ -139,26 +158,26 @@ namespace Utils {
         }
     };
 
-    template <uint8_t N>
+    template <uint N>
     class TwoBitArray {
     public:
-        BitSet64 _words[ceilDivide(N << 1, 64)];
+        BitSet64 _words[ceilDivide(N << 1, 64u)];
     public:
         ic_func TwoBitArray() = default;
 
-        const_ic_func uint8_t get(uint8_t index) const {
-            return _words[index / 32].template sub<uint8_t>(index % 32 * 2, 2);
+        const_ic_func uint get(uint index) const {
+            return _words[index / 32].template sub<uint>(index % 32 * 2, 2);
         }
 
-        ic_func void orSet(uint8_t index, uint8_t v) {
+        ic_func void orSet(uint index, uint v) {
             _words[index / 32].word |= ((uint64_t)v << (index % 32 * 2));
         }
 
-        ic_func void unset(uint8_t index) {
+        ic_func void unset(uint index) {
             _words[index / 32].word &= ~(3ull << (index % 32 * 2));
         }
 
-        ic_func void set(uint8_t index, uint8_t v) {
+        ic_func void set(uint index, uint v) {
             unset(index);
             if (v) orSet(index, v);
         }
@@ -190,7 +209,7 @@ namespace Game {
         }
     }
 
-    static const constexpr int TRANSFORMATIONS[] {
+    static const constexpr int TRANSLATIONS[] {
     //  UP DOWN LEFT RIGHT
         -(int)WIDTH,
          WIDTH,
@@ -199,30 +218,30 @@ namespace Game {
     };
 
     struct Position {
-        uint8_t pos = -1;
+        uint pos = -1;
 
         ic_func Position(uint x, uint y): pos(y * WIDTH + x) {
         }
 
-        ic_func Position(uint8_t pos): pos(pos) {
+        ic_func Position(uint pos): pos(pos) {
         }
 
         Position() = default;
 
-        ic_func operator uint8_t() const {
+        ic_func operator uint() const {
             return pos;
         }
 
-        const_ic_func uint8_t x() const {
+        const_ic_func uint x() const {
             return pos % WIDTH;
         }
 
-        const_ic_func uint8_t y() const {
+        const_ic_func uint y() const {
             return pos / WIDTH;
         }
 
-        ic_func Position &transform(Direction d) {
-            pos += TRANSFORMATIONS[d];
+        ic_func Position &translate(Direction d) {
+            pos += TRANSLATIONS[d];
             return *this;
         }
 
@@ -235,16 +254,20 @@ namespace Game {
                 default: return true;
             }
         }
+
+        explicit operator std:: string() const {
+            return std::string{char(y() + 'a'), char(x() + 'a')};
+        }
     };
 
     struct JointPosition {
-        uint8_t hash = 255;
+        uint hash = 255;
 
         ic_func JointPosition(Position p, bool b) {
             hash = (p << 1) | b;
         }
 
-        ic_func JointPosition(uint8_t hash): hash(hash) {
+        ic_func JointPosition(uint hash): hash(hash) {
         }
 
         ic_func JointPosition() = default;
@@ -261,7 +284,7 @@ namespace Game {
             return hash == 255;
         }
 
-        ic_func operator uint8_t() const {
+        ic_func operator uint() const {
             return hash;
         }
     };
@@ -275,7 +298,7 @@ namespace Game {
         ic_func Move(uint a): hash(a) {
         }
 
-        ic_func Move(Position p, uint8_t t) {
+        ic_func Move(Position p, uint t) {
             hash = p | (t << 6);
         }
 
@@ -283,13 +306,14 @@ namespace Game {
         }
 
         explicit operator std:: string() const {
-            return std::string{char(pos().y() + 'a'), char(pos().x() + 'a'), char(type() == 3? 'l': type() == 2? 's': 'r')};
+            return (std::string)pos() + char(type() == 3? 'l': type() == 2? 's': 'r');
         }
 
         friend std::istream &operator>>(std::istream &in, Move &move) {
-            char c[3];
+            char* c = new char[3];
             in >> c;
-            move = std::forward<Move>(Move(c));
+            move.hash = Move(c).hash;
+            delete[] c;
             return in;
         }
 
@@ -297,12 +321,11 @@ namespace Game {
             return hash & 63u;
         }
 
-        const_ic_func uint8_t type() const {
+        const_ic_func uint type() const {
             return hash >> 6;
         }
     };
 
-#define COLOR_BOARD
     class Board {
     public:
 #ifdef COLOR_BOARD
@@ -313,12 +336,15 @@ namespace Game {
         // Union Find:
         constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
         constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
+        const_ic_func static Direction getWallDirection(uint wallValue) {
+            return static_cast<Direction>(wallValue - WALL[0] + 1);
+        }
         struct UnionSet {
-            uint8_t borders[2]{};
+            uint borders[2]{};
             JointPosition tips[2]{}, root = -1;
             uint size = 1;
 #ifdef COLOR_BOARD
-            uint8_t color = 0;
+            uint8 color = 0;
 #endif
 
             UnionSet() = default;
@@ -328,11 +354,10 @@ namespace Game {
             ic_func UnionSet& operator=(UnionSet&&) noexcept = default;
 
             const_ic_func bool getTip(JointPosition tip) const {
-                if (tips[0] == tip) return true;
-                return false;
+                return tips[0] != tip;
             }
 
-            ic_func void handleBorder(uint8_t border) {
+            ic_func void handleBorder(uint border) {
                 if (!borders[0]) borders[0] = border;
                 else borders[1] = border;
             }
@@ -354,26 +379,29 @@ namespace Game {
 
     public:
         struct BoardChange {
-            struct UnionParentChange {
+            struct UnionParentChange { // todo pair
                 JointPosition joint;
-                uint8_t parent;
+                uint parent;
 
-                ic_func UnionParentChange(JointPosition j, uint8_t p): joint(j), parent(p) {
+                ic_func UnionParentChange(JointPosition j, uint p): joint(j), parent(p) {
                 }
             };
 
             Position move;
-            int score[2]{50, 50};
-            std::stack<UnionParentChange, std::vector<UnionParentChange>> union_parent_stack;
-            std::stack<UnionSet, std::vector<UnionSet>> union_unite_stack;
+            int score[2]{};
+            vector_stack<UnionParentChange> union_parent_stack;
+            vector_stack<UnionSet> union_unite_stack;
+            vector_stack<std::pair<uint, uint>> p_score_stack;
 
             BoardChange() = default;
         };
     private:
 
-        const_ic_func uint8_t findUnion(uint8_t pos, BoardChange* change) {
+        uint COUNT_1 = 0;
+        const_ic_func uint findUnion(uint pos, BoardChange* change) {
             if (_union_parents[pos] == pos) return pos;
-            uint8_t p = findUnion(_union_parents[pos], change);
+            ++COUNT_1;
+            uint p = findUnion(_union_parents[pos], change);
             if (p != _union_parents[pos]) {
                 if (change) change->union_parent_stack.emplace(pos, _union_parents[pos]);
                 _union_parents[pos] = p;
@@ -381,13 +409,13 @@ namespace Game {
             return p;
         }
 
-        const_ic_func uint8_t findConstUnion(uint8_t pos) const {
+        const_ic_func uint findUnionConst(uint pos) const {
             if (_union_parents[pos] == pos) return pos;
-            return findConstUnion(_union_parents[pos]);
+            return findUnionConst(_union_parents[pos]);
         }
 
-        ic_func UnionSet* unite(JointPosition aTip, uint8_t b, JointPosition bTip, BoardChange* change) {
-            uint8_t a = findUnion(aTip, change);
+        ic_func UnionSet* unite(JointPosition aTip, uint b, JointPosition bTip, BoardChange* change) {
+            uint a = findUnion(aTip, change);
             b = findUnion(b, change);
             auto A = &_union_sets[a], B = &_union_sets[b];
             if (a == b) return A;
@@ -401,6 +429,7 @@ namespace Game {
                 if (a != tip) change->union_parent_stack.emplace(tip, _union_parents[tip]);
                 change->union_unite_stack.emplace(*B);
             }
+
             _union_parents[a] = b;
             _union_parents[tip] = b;
             B->tips[bTipI] = tip;
@@ -410,16 +439,29 @@ namespace Game {
         }
 
         UnionSet _union_sets[WIDTH * HEIGHT * 2ul];
-        uint8_t _union_parents[WIDTH * HEIGHT * 2ul]{};
+        uint _union_parents[WIDTH * HEIGHT * 2ul]{};
 
         TwoBitArray<WIDTH * HEIGHT> _state_grid;
         int _score[2]{50, 50};
+        uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2][HEIGHT]{};
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
         const_ic_func JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
-            return getJoint(p.transform(d), !d);
+            return getJoint(p.translate(d), !d);
+        }
+
+        ic_func void setPotentialScore(bool side, uint y, uint value, BoardChange* log) {
+            if (log) log->p_score_stack.emplace(y + side*HEIGHT, _potential_score[side][y]);
+            _potential_score_sum[side] += value - _potential_score[side][y];
+            _potential_score[side][y] = value;
+        }
+
+        const_ic_func bool getBorderTip(UnionSet &set, Direction border) const {
+            auto pos = set.tips[0].pos();
+            if (pos.isBorder(border) && ORIENTATIONS[_state_grid.get(pos)][border] == set.tips[0].orientation()) return false;
+            return true;
         }
     public:
 
@@ -430,16 +472,17 @@ namespace Game {
             {RIGHT, LEFT, DOWN, UP},
         };
 
-        static const constexpr uint8_t ORIENTATIONS[][4] {
+        static const constexpr uint ORIENTATIONS[][4] {
         //  UP DOWN LEFT RIGHT
             {},
-            {0, 1, 1, 0},
-            {0, 0, 1, 1},
-            {1, 0, 1, 0}
+            {0, 1, 1, 0},// r
+            {0, 0, 1, 1},// s
+            {1, 0, 1, 0},// l
         };
 
         Board() {
-            for (uint8_t i = 0; i < AIR; ++i) {
+            for (uint i = 0; i < AIR; ++i) {
+                if (i < HEIGHT) _potential_score[0][i] = _potential_score[1][i] = 1;
                 _union_sets[i].root = _union_parents[i] = i;
                 _union_sets[i].reset();
             }
@@ -449,25 +492,34 @@ namespace Game {
             return _score[s];
         }
 
+        const_ic_func uint getPotentialScore(bool s) const {
+            return _potential_score_sum[s];
+        }
+
+        const_ic_func BitSet64 getLegalMoves() const {
+            return _legal_moves;
+        }
+
         const_ic_func int getTurn() const {
             return _turn;
         }
 
         const_ic_func JointPosition getJoint(Position p, Direction dir) const {
-            uint8_t t = _state_grid.get(p);
+            uint t = _state_grid.get(p);
             if (!t) return AIR;
-            return JointPosition(p, ORIENTATIONS[t][dir]);
+            return {p, static_cast<bool>(ORIENTATIONS[t][dir])};
         }
 
         Move randomMove(Utils::Random &rand=*Utils::RNG) const {
             uint r = rand.nextInt(_legal_moves.count()), i = 0;
             for (auto pos : _legal_moves) {
-                if (i++ == r) return Move(Position(pos), rand.nextInt(3)+1);
+                if (i++ == r) return {Position(pos), rand.nextBoolean()? 1u: 3u};
             }
             return {0u};
         }
 
         void play(Move move, BoardChange* log=nullptr) {
+            COUNT_1 = 0;
             const Position pos = move.pos();
             if (log) {
                 log->move = pos;
@@ -475,44 +527,47 @@ namespace Game {
                 log->score[1] = _score[1];
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
-            const uint8_t type = move.type();
+            const uint type = move.type();
             _state_grid.orSet(pos, type);
             _legal_moves.unset(pos);
 
             {
-                JointPosition neighbours[4]{};
+                uint neighbours[4]{};
                 UnionSet* sets[] = {&_union_sets[j0], &_union_sets[j1]};
-                uint counts[5]{}; // ab(=11) a = set, b = side
+                uint counts[5]{}; // 2-bit index: bit2 = set, bit1 = side; index 4 is extra count
+                uint set;
                 for (uint i = 0; i < 4u; ++i) {
-                    const JointPosition neigh = neighbour(pos, SIDES[type][i]);
-                    neighbours[i] = neigh;
+                    const JointPosition neighbourTip = neighbour(pos, SIDES[type][i]);
+                    neighbours[i] = neighbourTip;
                     if (neighbours[i] == AIR) continue;
                     if (neighbours[i] < AIR) neighbours[i] = findUnion(neighbours[i], log);
-                    uint set = i & 1u; // 0 1 0 1 (boolean)
+                    set = i & 1u; // 0 1 0 1 (boolean)
 
                     if (neighbours[i] < AIR) { // has neighbour
                         if (i & 2u) {
                             if (neighbours[i-2] < AIR && neighbours[i] == sets[set]->root) {
                                 // cycle
                                 _score[_turn] -= 5;
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = 3 + _turn;
-#endif
+                                #endif
                                 continue;
                             }
                         }
 
                         auto border = _union_sets[neighbours[i]].borders[0]; // border is WALL value
-                        uint count_index = ((i & 1u) << 1) + border - WALL[2];
-                        if (border > WALL[0]) { // > WALL[0] is colored wall
+                        uint count_index = ((i & 1u) << 1) | (border - WALL[2]);
+                        if (border > WALL[0]) { // > WALL[0] is blue/red wall
                             if (i & 2u &&
-                                    neighbours[!(i - 2)] < AIR &&
-                                    neighbours[i] == sets[!set]->root) {
+                                    neighbours[(i ^ 1u) & 1u] < AIR &&
+                                    neighbours[i] == sets[set ^ 1u]->root) {
                                 counts[4] = _union_sets[neighbours[i]].size - counts[count_index ^ 2u] - 1;
                             } else counts[count_index] = _union_sets[neighbours[i]].size;
                         } else if (!set) counts[4] = _union_sets[neighbours[i]].size;
 
-                        sets[set] = unite(j0 | set, neighbours[i], neigh, log);
+                        auto united = unite(j0 | set, neighbours[i], neighbourTip, log);
+                        if (sets[set] == sets[set ^ 1u]) sets[set ^ 1u] = united;
+                        sets[set] = united;
                     } else sets[set]->handleBorder(neighbours[i]);
 
                     if (sets[set]->enclosed()) {
@@ -520,49 +575,80 @@ namespace Game {
                             if (sets[set]->borders[0] == sets[set]->borders[1]) {
                                 // connected color with same color
                                 _score[_turn] -= 3;
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = 3 + _turn;
-#endif
+                                #endif
                             } else if (sets[set]->borders[1] != WALL[0]) {
                                 // connected to other side
                                 _score[_turn] += static_cast<int>((sets[0] == sets[1]) ?
                                                     (counts[_turn] | counts[_turn + 2]) + counts[4] + 2 : // edge case
                                                     counts[(set << 1) | _turn] + 1 // normal case
                                                  );
-#ifdef COLOR_BOARD
+                                #ifdef COLOR_BOARD
                                 sets[set]->color = _turn + 1;
-#endif
-                            } else {
-#ifdef COLOR_BOARD
-                                sets[set]->color = 5;
-#endif
+                            } else sets[set]->color = 5;
+                        } else sets[set]->color = 5;
+                        #else
+                            }
+                        }
+                        #endif
+                    } else if (sets[set]->borders[0] == WALL[0]) {
+                        #ifdef COLOR_BOARD
+                        sets[set]->color = 5;
+                        #endif
+                    }
+                }
+                for (set = 0; set < 2; ++set) {
+                    auto s = sets[set];
+                    if (set && sets[0] == sets[1]) break;
+                    if (s->borders[0]) {
+                        if (s->enclosed()) {
+                            bool i;
+                            if (s->borders[0] != WALL[0]) {
+                                auto border = getWallDirection(s->borders[0]);
+                                i = getBorderTip(*s, border);
+                                setPotentialScore(border == RIGHT, s->tips[i].pos().y(), 0, log);
+                            } else if (s->borders[1] != WALL[0])
+                                i = !getBorderTip(*s, getWallDirection(s->borders[1]));
+                            if (s->borders[1] != WALL[0]) {
+                                setPotentialScore(WALL[3] == s->borders[1], s->tips[!i].pos().y(), 0, log);
                             }
                         } else {
-#ifdef COLOR_BOARD
-                            sets[set]->color = 5;
-#endif
+                            if (s->borders[0] != WALL[0]) {
+                                auto border = getWallDirection(s->borders[0]);
+                                bool i = getBorderTip(*s, border);
+                                setPotentialScore(border == RIGHT, s->tips[i].pos().y(), s->size + 1, log);
+                            }
                         }
                     }
-#ifdef COLOR_BOARD
-                    else if (sets[set]->borders[0] == WALL[0])
-                        sets[set]->color = 5;
-#endif
                 }
-            }
 
+                if (!log) {
+                    std::cerr << _potential_score_sum[0] << " " << _potential_score_sum[1] << "\n";
+                    for (uint i = 0; i < HEIGHT; ++i)
+                        std::cerr << _potential_score[0][i] << ' ' << _potential_score[1][i] << '\n';
+                    std::cerr << std::endl;
+                }
+
+            }
             _game_over = !_legal_moves;
             _turn = !_turn;
+
+            if (!log) print(std::cerr);
         }
 
         void undo(BoardChange &change) {
-            // todo test
             _turn = !_turn;
             _game_over = false;
             _state_grid.unset(change.move);
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
             _score[1] = change.score[1];
-            std::copy(change.score, change.score+2, _score);
+            while (!change.p_score_stack.empty()) {
+                uint i = change.p_score_stack.top().first;
+                setPotentialScore(i >= HEIGHT, i % HEIGHT, change.p_score_stack.top().second, nullptr);
+                change.p_score_stack.pop();
+            }
             while (!change.union_parent_stack.empty()) {
                 _union_parents[change.union_parent_stack.top().joint] = change.union_parent_stack.top().parent;
                 change.union_parent_stack.pop();
@@ -580,31 +666,31 @@ namespace Game {
         }
 
         std::ostream &print(std::ostream &out) const {
-            constexpr const uint8_t box_width = 5, box_height = 3;
+            constexpr const uint8 box_width = 5, box_height = 3;
             constexpr const bool grid = false, dots_only = false;
             char r[WIDTH * box_width][HEIGHT * box_height];
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             std::string colors[WIDTH * box_width][HEIGHT * box_height]{};
             constexpr const char* BG = "\033[49m";
-#endif
-            for (uint8_t y = 0; y < HEIGHT*box_height; ++y) {
+            #endif
+            for (uint8 y = 0; y < HEIGHT * box_height; ++y) {
                 for (auto & x : r) {
                     x[y] = ' ';
                 }
             }
-            for (uint8_t y = 0; y < HEIGHT; ++y) {
-                for (uint8_t x = 0; x < WIDTH; ++x) {
+            for (uint8 y = 0; y < HEIGHT; ++y) {
+                for (uint8 x = 0; x < WIDTH; ++x) {
                     auto type = _state_grid.get(y * WIDTH + x);
                     if (!type) continue;
 
                     r[x * box_width][y * box_height + 1] = '-';
                     r[x * box_width + 4][y * box_height + 1] = '-';
-#ifdef COLOR_BOARD
-                    colors[x * box_width][y * box_height + 1] = COLOR[_union_sets[findConstUnion(getJoint(Position(x, y), LEFT))].color];
-                    colors[x * box_width + 4][y * box_height + 1] = COLOR[_union_sets[findConstUnion(getJoint(Position(x, y), RIGHT))].color];
-                    auto c0 = COLOR[_union_sets[findConstUnion(JointPosition(Position(x, y), false))].color];
-                    auto c1 = COLOR[_union_sets[findConstUnion(JointPosition(Position(x, y), true))].color];
-#endif
+                    #ifdef COLOR_BOARD
+                    colors[x * box_width][y * box_height + 1] = COLOR[_union_sets[findUnionConst(getJoint(Position(x, y), LEFT))].color];
+                    colors[x * box_width + 4][y * box_height + 1] = COLOR[_union_sets[findUnionConst(getJoint(Position(x, y), RIGHT))].color];
+                    auto c0 = COLOR[_union_sets[findUnionConst(JointPosition(Position(x, y), false))].color];
+                    auto c1 = COLOR[_union_sets[findUnionConst(JointPosition(Position(x, y), true))].color];
+                    #endif
                     switch (type) {
                         case 2:
                             r[x * box_width + 2][y * box_height + 1] = '+';
@@ -613,90 +699,90 @@ namespace Game {
                             r[x * box_width + 2][y * box_height + 2] = '|';
                             r[x * box_width + 3][y * box_height + 1] = '-';
                             r[x * box_width + 1][y * box_height + 1] = '-';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             if (std::strcmp(c0, "0") != 0) colors[x * box_width + 2][y * box_height + 1] += c0;
                             else colors[x * box_width + 2][y * box_height + 1] += c1;
                             colors[x * box_width + 2][y * box_height] = c0;
                             colors[x * box_width + 2][y * box_height + 2] = c0;
                             colors[x * box_width + 3][y * box_height + 1] = c1;
                             colors[x * box_width + 1][y * box_height + 1] = c1;
-#endif
+                            #endif
                             break;
                         case 3:
                             r[x * box_width + 1][y * box_height] = '/';
                             r[x * box_width + 3][y * box_height + 2] = '/';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             colors[x * box_width + 1][y * box_height] = c1;
                             colors[x * box_width + 3][y * box_height + 2] = c0;
-#endif
+                            #endif
                             break;
                         case 1:
                             r[x * box_width + 1][y * box_height + 2] = '\\';
                             r[x * box_width + 3][y * box_height] = '\\';
-#ifdef COLOR_BOARD
+                            #ifdef COLOR_BOARD
                             colors[x * box_width + 1][y * box_height + 2] = c1;
                             colors[x * box_width + 3][y * box_height] = c0;
-#endif
+                            #endif
                             break;
                         default:
                             continue;
                     }
                 }
             }
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             out << BG;
-#endif
+            #endif
             out << "   ";
-            for (uint8_t x = 0; x < WIDTH; ++x) {
+            for (uint8 x = 0; x < WIDTH; ++x) {
                 out << std::string(box_width/2+1, ' ') << char(x+'a') << std::string(box_width/2-!grid, ' ');
             }
-#ifdef COLOR_BOARD
+            #ifdef COLOR_BOARD
             out << "\033[49m";
-#endif
+            #endif
             out << "\n";
-            for (uint8_t y = 0;; ++y) {
-#ifdef COLOR_BOARD
+            for (uint8 y = 0;; ++y) {
+                #ifdef COLOR_BOARD
                 out << BG;
-#endif
+                #endif
                 if (y % box_height == box_height/2) out << ' ' << char((y/box_height) + 'a') << ' ';
                 else out << "   ";
                 if (!(y % box_height) && (grid || y == HEIGHT * box_height || !y)) {
-                    for (uint8_t x = 0; x < WIDTH; ++x) {
+                    for (uint8 x = 0; x < WIDTH; ++x) {
                         if (grid || !x) out << '+';
                         out << std::string(box_width, !(y == HEIGHT * box_height || !y) && dots_only? ' ': '-');
                     }
                     out << '+';
-#ifdef COLOR_BOARD
-                out << "\033[49m";
-#endif
+                    #ifdef COLOR_BOARD
+                    out << "\033[49m";
+                    #endif
                     out << '\n';
-#ifdef COLOR_BOARD
-                out << BG;
-#endif
+                    #ifdef COLOR_BOARD
+                    out << BG;
+                    #endif
                     out << "   ";
                 }
                 if (y == HEIGHT * box_height) break;
-                for (uint8_t x = 0; x < WIDTH*box_width; ++x) {
+                for (uint8 x = 0; x < WIDTH * box_width; ++x) {
                     if (!(x % box_width) && (grid || !x)){
-#ifdef COLOR_BOARD
+                        #ifdef COLOR_BOARD
                         if (!x) out << std::string() + "\033[" + COLOR[1] + "m|\033[39m";
                         else
-#endif
+                        #endif
                         out << (!(x == WIDTH * box_width || !x) && dots_only? ' ': '|');
                     }
-#ifdef COLOR_BOARD
+                    #ifdef COLOR_BOARD
                     out << std::string() + "\033[" + colors[x][y] + "m";
-#endif
+                    #endif
                     out << r[x][y];
-#ifdef COLOR_BOARD
+                    #ifdef COLOR_BOARD
                     out << "\033[39m";
-#endif
+                    #endif
                 }
-#ifdef COLOR_BOARD
+                #ifdef COLOR_BOARD
                 out << std::string() + "\033[" + COLOR[2] + "m|\033[0m";
-#else
+                #else
                 out << '|';
-#endif
+                #endif
                 out << '\n';
             }
             std::string score[] = {std::to_string(_score[0]), std::to_string(_score[1])};
@@ -708,37 +794,184 @@ namespace Game {
     };
 }
 
+namespace MoveFinder {
+    class MoveController {
+    protected:
+        Game::Board &board;
+        const bool side;
+        MoveController(Game::Board &board, bool side): board(board), side(side) {}
+    public:
+        virtual Game::Move suggest() = 0;
+    };
+
+    namespace BoardEvaluation {
+        struct PotentialScore {
+            int score;
+            uint p_score;
+
+            ic_func explicit PotentialScore(bool maximizing):
+                    score(maximizing? INT32_MIN: INT32_MAX),
+                    p_score(maximizing? 0: UINT32_MAX) {}
+
+            PotentialScore(const Game::Board &b, bool side):
+                    score(b.getScore(side)),
+                    p_score(b.getPotentialScore(side)) {}
+
+            PotentialScore() = default;
+            PotentialScore(const PotentialScore&) = default;
+
+
+            const_ic_func bool operator>=(const PotentialScore &o) const {
+                return score > o.score || (score == o.score && p_score >= o.p_score);
+            }
+
+            const_ic_func bool operator<(const PotentialScore &o) const {
+                return !operator>=(o);
+            }
+        };
+    }
+
+    constexpr static Utils::BitSet64 slice1 = 0x102040810204081, slice2 = 0x4081020408102040;
+
+    uint m_count = 0;
+    template <typename T>
+    T minimax(
+            Game::Board &board,
+            bool side,
+            uint depth,
+            bool maximizing=true,
+            T alpha=T{false}, T beta=T{true}
+            ) {
+        typedef T Evaluation;
+        ++m_count;
+        if (!depth || board.isOver()) {
+            return {board, side};
+        }
+        Evaluation best(maximizing);
+        Game::Board::BoardChange undo;
+        uint i = 0;
+        Utils::BitSet64 currentSlice = side? slice2: slice1;
+        while (i < Game::WIDTH)  {
+            for (auto pos : board.getLegalMoves() & currentSlice) {
+                for (uint t = 1; t < 4; ++t) {
+                    board.play({pos, t}, &undo);
+                    Evaluation next = minimax(board, side, depth-1, !maximizing, alpha, beta);
+                    board.undo(undo);
+
+                    if (maximizing) {
+                        if (best < next) {
+                            best = next;
+                            if (best >= beta) return best;
+                            if (best < alpha) alpha = best;
+                        }
+                    } else {
+                        if (next < best) {
+                            best = next;
+                            if (alpha >= best) return best;
+                            if (beta < best) beta = best;
+                        }
+                    }
+                }
+            }
+
+            if (side) currentSlice >>= 1;
+            else currentSlice <<= 1;
+            ++i;
+        }
+        return best;
+    }
+
+    template <typename EVALUATOR=BoardEvaluation::PotentialScore>
+    class MinimaxMoveController: public MoveController {
+    public:
+        typedef EVALUATOR Evaluation;
+
+        uint depth = 4;
+
+        MinimaxMoveController(Game::Board &board, bool side): MoveController(board, side) {}
+
+        Game::Move suggest() override {
+            uint count = board.getLegalMoves().count();
+            if (count <= 50) depth = 5;
+            if (count <= 20) depth = 6;
+            if (count <= 10) depth = 7;
+            if (count <= 9) depth = 9;
+            Evaluation bestScore(true), alpha(false);
+            Game::Move moves[count * 3];
+            uint size = 0;
+            Game::Board::BoardChange undo;
+            //std::cerr << "WORD: " << board.getLegalMoves().word << '\n';
+            uint i = 0;
+            Utils::BitSet64 currentSlice = side? slice2: slice1;
+            while (i < Game::WIDTH) {
+                //std::cerr << std::bitset<64>(currentSlice.word) << '\n';
+                for (auto pos : board.getLegalMoves() & currentSlice) {
+                    //std::cerr << (std::string)Game::Position(pos) << ',';
+                    for (uint t = 1; t < 4; ++t) {
+                        Game::Move m(pos, t);
+                        //std::cerr << (std::string)m << '\n';
+                        board.play(m, &undo);
+                        auto next = minimax<Evaluation>(board, side, depth-1, false, alpha);
+                        board.undo(undo);
+
+                        if (next >= bestScore) {
+                            if (bestScore < next) {
+                                bestScore = next;
+                                size = 0;
+                            }
+                            moves[size++] = m;
+                            if (bestScore < alpha) alpha = bestScore;
+                        }
+                    }
+                }
+                if (side) currentSlice >>= 1;
+                else currentSlice <<= 1;
+                ++i;
+            }
+            std::cerr << "count: " << m_count << '\n';
+            m_count = 0;
+            uint r = Utils::RNG->nextInt(size);
+            /*
+            std::cerr << '\n';
+            for (uint j = 0; j < size; ++j) {
+                std::cerr << j << ":" << (std::string)moves[j] << ',';
+            }
+            std::cerr << '\n';
+            std::cerr << i << ' ' << size << '\n';
+             */
+            return moves[r];
+        }
+    };
+}
+
+void benchmark() {
+    using namespace Game;
+    using std::cout, std::cin, std::cerr;
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    uint amount = 50000;
+    cerr << "start\n";
+    start = std::chrono::system_clock::now();
+    Board b;
+    Board::BoardChange moves[63];
+    for (uint i = 0; i < amount; ++i) {
+        for (auto &move : moves)
+            b.play(b.randomMove(), &move);
+        if (b.getPotentialScore(false) || b.getPotentialScore(true)) while (true) cerr << "WAT";
+        for (uint j = 62; j < 63; --j)
+            b.undo(moves[j]);
+    }
+    end = std::chrono::system_clock::now();
+    cerr << double(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()) / (double)amount << " MILLIs per game" << '\n'; // 4236
+    cerr << "done\n";
+}
+
 int main() {
     Utils::Random::init();
     using namespace Game;
+    using std::cout, std::cin, std::cerr;
     Board board;
 
-    Board::BoardChange changes[WIDTH * HEIGHT];
-    uint i = 0;
-    while (!board.isOver()) {
-        Move m = board.randomMove();
-        std::cout << (std::string)m << '\n';
-        board.play(m, &changes[i++]);
-        board.print(std::cout);
-    }
-
-    std::cout << "ROLLING BACK\n\n\n\n\n\n\n\n\n";
-
-    while (i) {
-        board.print(std::cout);
-        board.undo(changes[--i]);
-    }
-    board.print(std::cout);
-
-    while (!board.isOver()) {
-        Move m = board.randomMove();
-        std::cout << (std::string)m << '\n';
-        board.play(m);
-        board.print(std::cout);
-    }
-
-    return 0;
-    using std::cout, std::cin, std::cerr;
+    benchmark();
 
     Move move;
     uint c = 0;
@@ -756,13 +989,14 @@ int main() {
 
         c++;
     }
+    auto minimax = new MoveFinder::MinimaxMoveController<MoveFinder::BoardEvaluation::PotentialScore>(board, board.getTurn());
     const bool side = board.getTurn();
 
     while (!board.isOver()) {
-        cerr << ++c << ": " << board.getScore(0) << ' ' << board.getScore(1) << '\n';
-        if (c >= WIDTH * HEIGHT - 10) board.print(cerr) << '\n';
+        //cerr << ++c << ": " << board.getScore(0) << ' ' << board.getScore(1) << '\n';
+        //if (c >= WIDTH * HEIGHT - 63) board.print(cerr) << '\n';
         if (side == board.getTurn()) {
-            move = board.randomMove();
+            move = minimax->suggest();
             cout << (std::string)move << std::endl;
         } else {
             cin >> move;
