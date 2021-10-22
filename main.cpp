@@ -67,7 +67,7 @@ namespace Utils {
         }
 
         static inline void init() {
-            RNG = new Random(1200565796);
+            RNG = new Random();
             std::cerr << *RNG << '\n';
         }
     };
@@ -623,18 +623,19 @@ namespace Game {
                     }
                 }
 
+                /*
                 if (!log) {
                     std::cerr << _potential_score_sum[0] << " " << _potential_score_sum[1] << "\n";
                     for (uint i = 0; i < HEIGHT; ++i)
                         std::cerr << _potential_score[0][i] << ' ' << _potential_score[1][i] << '\n';
                     std::cerr << std::endl;
                 }
-
+*/
             }
             _game_over = !_legal_moves;
             _turn = !_turn;
 
-            if (!log) print(std::cerr);
+            //if (!log) print(std::cerr);
         }
 
         void undo(BoardChange &change) {
@@ -806,23 +807,26 @@ namespace MoveFinder {
 
     namespace BoardEvaluation {
         struct PotentialScore {
-            int score;
-            uint p_score;
+            int score[2];
+            uint p_score[2];
 
             ic_func explicit PotentialScore(bool maximizing):
-                    score(maximizing? INT32_MIN: INT32_MAX),
-                    p_score(maximizing? 0: UINT32_MAX) {}
+                    score{maximizing ? INT32_MIN : INT32_MAX, maximizing ? INT32_MAX : INT32_MIN},
+                    p_score{maximizing ? 0 : UINT32_MAX, maximizing ? 0 : UINT32_MAX} {}
 
             PotentialScore(const Game::Board &b, bool side):
-                    score(b.getScore(side)),
-                    p_score(b.getPotentialScore(side)) {}
+                    score{b.getScore(side), b.getScore(!side)},
+                    p_score{b.getPotentialScore(side), b.getPotentialScore(!side)} {}
 
             PotentialScore() = default;
             PotentialScore(const PotentialScore&) = default;
 
-
             const_ic_func bool operator>=(const PotentialScore &o) const {
-                return score > o.score || (score == o.score && p_score >= o.p_score);
+                return
+                    score[0] > o.score[0] ||
+                    (score[0] == o.score[0] && (p_score[0] > o.p_score[0] ||
+                    (p_score[0] == o.p_score[0] && (p_score[1] > o.p_score[1] ||
+                    (p_score[1] == o.p_score[1] && score[1] <= o.score[1])))));
             }
 
             const_ic_func bool operator<(const PotentialScore &o) const {
@@ -892,10 +896,10 @@ namespace MoveFinder {
 
         Game::Move suggest() override {
             uint count = board.getLegalMoves().count();
-            if (count <= 50) depth = 5;
-            if (count <= 20) depth = 6;
-            if (count <= 10) depth = 7;
-            if (count <= 9) depth = 9;
+            if (count <= 50) depth = 3;
+            if (count <= 20) depth = 4;
+            if (count <= 9) depth = 7;
+            //if (count <= 8) depth = 8;
             Evaluation bestScore(true), alpha(false);
             Game::Move moves[count * 3];
             uint size = 0;
@@ -970,8 +974,6 @@ int main() {
     using namespace Game;
     using std::cout, std::cin, std::cerr;
     Board board;
-
-    benchmark();
 
     Move move;
     uint c = 0;
