@@ -890,15 +890,14 @@ namespace MoveFinder {
     public:
         typedef EVALUATOR Evaluation;
 
-        uint depth = 4;
+        uint depth = 3;
 
         MinimaxMoveController(Game::Board &board, bool side): MoveController(board, side) {}
 
         Game::Move suggest() override {
             uint count = board.getLegalMoves().count();
-            if (count <= 50) depth = 3;
-            if (count <= 20) depth = 4;
-            if (count <= 9) depth = 7;
+            if (count <= 21) depth = 4;
+            else if (count <= 9) depth = 7;
             //if (count <= 8) depth = 8;
             Evaluation bestScore(true), alpha(false);
             Game::Move moves[count * 3];
