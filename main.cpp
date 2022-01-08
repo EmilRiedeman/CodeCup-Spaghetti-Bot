@@ -896,11 +896,13 @@ namespace MoveFinder {
 
         Game::Move suggest() override {
             uint count = board.getLegalMoves().count();
-            if (count <= 21) depth = 4;
-            else if (count <= 9) depth = 7;
+            if (count <= 25) depth = 4;
+            if (count <= 13) depth = 5;
+            if (count <= 10) depth = 6;
+            if (count <= 9) depth = 7;
             //if (count <= 8) depth = 8;
             Evaluation bestScore(true), alpha(false);
-            Game::Move moves[count * 3];
+            Game::Move moves[Game::WIDTH * Game::HEIGHT * 3];
             uint size = 0;
             Game::Board::BoardChange undo;
             //std::cerr << "WORD: " << board.getLegalMoves().word << '\n';
@@ -931,7 +933,7 @@ namespace MoveFinder {
                 else currentSlice <<= 1;
                 ++i;
             }
-            std::cerr << "count: " << m_count << '\n';
+            std::cerr << count << ": board states: " << m_count << " (depth: " << depth << ')' << '\n';
             m_count = 0;
             uint r = Utils::RNG->nextInt(size);
             /*
