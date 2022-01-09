@@ -463,9 +463,18 @@ namespace Game {
 
             constexpr static const uint planes = 4;
 
-            Data left = new floating_type[planes*AREA], right = new floating_type[planes*AREA];
+            Data left = new floating_type[planes*AREA];
+            Data right = new floating_type[planes*AREA];
 
-            Decoder() = default;
+            constexpr Decoder() {
+                std::fill(left, left + AREA, 1);
+                std::fill(right, right + AREA, 1);
+            }
+
+            ~Decoder() {
+                delete[] left;
+                delete[] right;
+            }
 
             constexpr void set(uint plane, Position pos, floating_type x=1) const {
                 left[plane * AREA + pos] = x;
@@ -555,8 +564,8 @@ namespace Game {
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint type = move.type();
-//            decoded.set(FREE, pos, 0);
-//            decoded.set(type+1, pos);
+            decoded.set(FREE, pos, 0);
+            decoded.set(type, pos);
             _state_grid[pos] = type;
             _legal_moves.unset(pos);
 
@@ -670,8 +679,8 @@ namespace Game {
         void undo(BoardChange &change) {
             _turn = !_turn;
             _game_over = false;
-//            decoded.set(FREE, change.move);
-//            decoded.set(_state_grid[change.move]+1, change.move, 0);
+            decoded.set(FREE, change.move);
+            decoded.set(_state_grid[change.move], change.move, 0);
             _state_grid[change.move] = 0;
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
