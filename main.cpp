@@ -66,7 +66,7 @@ namespace Utils {
         }
 
         static inline void init() {
-            RNG = new Random();
+            RNG = new Random(1070326155);
             std::cerr << *RNG << '\n';
         }
     };
@@ -190,6 +190,7 @@ namespace Game {
 
     constexpr const static uint WIDTH = 7;
     constexpr const static uint HEIGHT = 9;
+    constexpr const static uint AREA = WIDTH*HEIGHT;
 
     enum Direction: uint8_t {
         UP,
@@ -242,6 +243,10 @@ namespace Game {
         constexpr Position &translate(Direction d) {
             pos += TRANSLATIONS[d];
             return *this;
+        }
+
+        nd_c Position mirrorHorizontal() const {
+            return WIDTH-x()-1 + WIDTH*y();
         }
 
         nd_c bool isBorder(Direction dir) const {
@@ -325,8 +330,10 @@ namespace Game {
         }
     };
 
+    template <typename T>
     class Board {
     public:
+        typedef T floating_type;
 #ifdef COLOR_BOARD
         //                                   RESET  BLUE       RED         BLUE2      RED2  GRAY (5)
         constexpr static const char* COLOR[] {"39", "38;5;17", "38;5;196", "38;5;31", "91", "38;5;240"};
@@ -444,6 +451,30 @@ namespace Game {
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
+        enum Plane : uint {
+            FREE,
+            TYPE_R,
+            TYPE_S,
+            TYPE_L
+        };
+
+        struct Decoder {
+            typedef floating_type* Data;
+
+            constexpr static const uint planes = 4;
+
+            Data left = new floating_type[planes*AREA], right = new floating_type[planes*AREA];
+
+            Decoder() = default;
+
+            constexpr void set(uint plane, Position pos, floating_type x=1) const {
+                left[plane * AREA + pos] = x;
+                right[plane * AREA + pos.mirrorHorizontal()] = x;
+            }
+        };
+
+        const Decoder decoded{};
+
         nd_c JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
             return getJoint(p.translate(d), !d);
@@ -524,6 +555,8 @@ namespace Game {
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint type = move.type();
+//            decoded.set(FREE, pos, 0);
+//            decoded.set(type+1, pos);
             _state_grid[pos] = type;
             _legal_moves.unset(pos);
 
@@ -637,6 +670,8 @@ namespace Game {
         void undo(BoardChange &change) {
             _turn = !_turn;
             _game_over = false;
+//            decoded.set(FREE, change.move);
+//            decoded.set(_state_grid[change.move]+1, change.move, 0);
             _state_grid[change.move] = 0;
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
@@ -792,13 +827,17 @@ namespace Game {
 }
 
 namespace MoveFinder {
+    template <typename T>
     class MoveController {
-    protected:
-        Game::Board &board;
+    public:
         const bool side;
-        MoveController(Game::Board &board, bool side): board(board), side(side) {}
+    protected:
+        Game::Board<T> &board;
+
+        MoveController(Game::Board<T> &board, bool side): board(board), side(side) {}
     public:
         virtual Game::Move suggest() = 0;
+
     };
 
     namespace BoardEvaluation {
@@ -808,9 +847,11 @@ namespace MoveFinder {
 
             constexpr explicit PotentialScore(bool maximizing):
                     score{maximizing ? INT32_MIN : INT32_MAX, maximizing ? INT32_MAX : INT32_MIN},
-                    p_score{maximizing ? 0 : UINT32_MAX, maximizing ? 0 : UINT32_MAX} {}
+                    p_score{maximizing ? 0 : UINT32_MAX, maximizing ? 0 : UINT32_MAX}
+                    {}
 
-            PotentialScore(const Game::Board &b, bool side):
+            template<typename T>
+            PotentialScore(const Game::Board<T> &b, bool side):
                     score{b.getScore(side), b.getScore(!side)},
                     p_score{b.getPotentialScore(side), b.getPotentialScore(!side)} {}
 
@@ -834,9 +875,9 @@ namespace MoveFinder {
     constexpr static Utils::BitSet64 slice1 = 0x102040810204081, slice2 = 0x4081020408102040;
 
     uint m_count = 0;
-    template <typename T>
+    template <typename T, typename S>
     T minimax(
-            Game::Board &board,
+            Game::Board<S> &board,
             bool side,
             uint depth,
             bool maximizing=true,
@@ -848,7 +889,7 @@ namespace MoveFinder {
             return {board, side};
         }
         Evaluation best(maximizing);
-        Game::Board::BoardChange undo;
+        typename Game::Board<S>::BoardChange undo;
         uint i = 0;
         Utils::BitSet64 currentSlice = side? slice2: slice1;
         while (i < Game::WIDTH)  {
@@ -881,17 +922,18 @@ namespace MoveFinder {
         return best;
     }
 
-    template <typename EVALUATOR=BoardEvaluation::PotentialScore>
-    class MinimaxMoveController: public MoveController {
+    template <typename EVALUATOR, typename T>
+    class MinimaxMoveController: public MoveController<T> {
     public:
+        typedef MoveController<T> Base;
         typedef EVALUATOR Evaluation;
 
         uint depth = 3;
 
-        MinimaxMoveController(Game::Board &board, bool side): MoveController(board, side) {}
+        MinimaxMoveController(Game::Board<T> &board, bool side): MoveController<T>(board, side) {}
 
         Game::Move suggest() override {
-            uint count = board.getLegalMoves().count();
+            uint count = Base::board.getLegalMoves().count();
             if (count <= 25) depth = 4;
             if (count <= 13) depth = 5;
             if (count <= 10) depth = 6;
@@ -900,20 +942,20 @@ namespace MoveFinder {
             Evaluation bestScore(true), alpha(false);
             Game::Move moves[Game::WIDTH * Game::HEIGHT * 3];
             uint size = 0;
-            Game::Board::BoardChange undo;
+            typename Game::Board<T>::BoardChange undo{};
             //std::cerr << "WORD: " << board.getLegalMoves().word << '\n';
             uint i = 0;
-            Utils::BitSet64 currentSlice = side? slice2: slice1;
+            Utils::BitSet64 currentSlice = Base::side? slice2: slice1;
             while (i < Game::WIDTH) {
                 //std::cerr << std::bitset<64>(currentSlice.word) << '\n';
-                for (auto pos : board.getLegalMoves() & currentSlice) {
+                for (auto pos : Base::board.getLegalMoves() & currentSlice) {
                     //std::cerr << (std::string)Game::Position(pos) << ',';
                     for (uint t = 1; t < 4; ++t) {
                         Game::Move m(pos, t);
                         //std::cerr << (std::string)m << '\n';
-                        board.play(m, &undo);
-                        auto next = minimax<Evaluation>(board, side, depth-1, false, alpha);
-                        board.undo(undo);
+                        Base::board.play(m, &undo);
+                        auto next = minimax<Evaluation>(Base::board, Base::side, depth-1, false, alpha);
+                        Base::board.undo(undo);
 
                         if (next >= bestScore) {
                             if (bestScore < next) {
@@ -925,7 +967,7 @@ namespace MoveFinder {
                         }
                     }
                 }
-                if (side) currentSlice >>= 1;
+                if (Base::side) currentSlice >>= 1;
                 else currentSlice <<= 1;
                 ++i;
             }
@@ -945,6 +987,7 @@ namespace MoveFinder {
     };
 }
 
+template <typename Board>
 void benchmark() {
     using namespace Game;
     using std::cout, std::cin, std::cerr;
@@ -953,7 +996,7 @@ void benchmark() {
     cerr << "start\n";
     start = std::chrono::system_clock::now();
     Board b;
-    Board::BoardChange moves[63];
+    typename Board::BoardChange moves[63];
     for (uint i = 0; i < amount; ++i) {
         for (auto &move : moves)
             b.play(b.randomMove(), &move);
@@ -966,43 +1009,43 @@ void benchmark() {
     cerr << "done\n";
 }
 
-int main() {
-    Utils::Random::init();
-    using namespace Game;
+template <typename Board, typename MF>
+void competition(Board &board, MF* bot) {
     using std::cout, std::cin, std::cerr;
-    Board board;
 
-    Move move;
-    uint c = 0;
-
-    cin >> move;
-    board.play(move);
-    cin >> move;
-    board.play(move);
-
-    std::string s;
-    cin >> s;
-    if (s[0] != 'S') {
-        move = Move(s.c_str());
-        board.play(move);
-
-        c++;
-    }
-    auto minimax = new MoveFinder::MinimaxMoveController<MoveFinder::BoardEvaluation::PotentialScore>(board, board.getTurn());
-    const bool side = board.getTurn();
-
+    Game::Move move;
     while (!board.isOver()) {
-        //cerr << ++c << ": " << board.getScore(0) << ' ' << board.getScore(1) << '\n';
-        //if (c >= WIDTH * HEIGHT - 63) board.print(cerr) << '\n';
-        if (side == board.getTurn()) {
-            move = minimax->suggest();
+        if (bot->side == board.getTurn()) {
+            move = bot->suggest();
             cout << (std::string)move << std::endl;
         } else {
             cin >> move;
         }
         board.play(move);
     }
+}
 
+int main() {
+    Utils::Random::init();
+    using namespace Game;
+    using namespace MoveFinder;
+    using std::cout, std::cin, std::cerr;
+    typedef float floating_type;
+    Board<floating_type> board;
+
+    Move m1, m2;
+
+    cin >> m1 >> m2;
+
+    board.play(m1);
+    board.play(m2);
+    std::string s;
+    cin >> s;
+    if (s[0] != 'S') {
+        board.play(Move(s.c_str()));
+    }
+    board.print(std::cerr);
+    competition(board, new MinimaxMoveController<BoardEvaluation::PotentialScore, floating_type>(board, board.getTurn()));
     std::cerr << "\n\033[m";
     return 0;
 }
