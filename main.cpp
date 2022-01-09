@@ -3,16 +3,14 @@
 #include <algorithm>
 #include <stack>
 #include <vector>
-#include <cstring>
 
 typedef uint_fast8_t uint8;
-typedef uint32_t uint;
+typedef unsigned int uint;
 
 template <typename T>
 using vector_stack = std::stack<T, std::vector<T>>;
 
-#define ic_func inline constexpr
-#define const_ic_func [[nodiscard]] ic_func
+#define nd_c [[nodiscard]] constexpr
 
 inline std::ostream &operator<<(std::ostream &out, unsigned char c) {
     return out << (int)c;
@@ -23,12 +21,12 @@ inline std::ostream &operator<<(std::ostream &out, unsigned char c) {
 namespace Utils {
 
     template <typename T>
-    ic_func T ceilDivide(T a, T b) {
+    constexpr T ceilDivide(T a, T b) {
         return 1 + ((a - 1) / b);
     }
 
     template <typename T>
-    ic_func std::pair<T&, T&> minmax(T& x, T& y) {
+    constexpr std::pair<T&, T&> minmax(T& x, T& y) {
         return x < y? std::pair<T&, T&>(x, y): std::pair<T&, T&>(y, x);
     }
 
@@ -76,59 +74,59 @@ namespace Utils {
     public:
         uint64_t word = 0;
 
-        ic_func BitSet64() = default;
-        ic_func BitSet64(uint64_t word): word(word) {}
+        constexpr BitSet64() = default;
+        constexpr BitSet64(uint64_t word): word(word) {}
 
-        const_ic_func bool get(uint index) const {
+        nd_c bool get(uint index) const {
             return (1ull << index) & word;
         }
 
-        ic_func BitSet64& orSet(uint index) {
+        constexpr BitSet64& orSet(uint index) {
             word |= (1ull << index);
             return *this;
         }
 
-        ic_func void unset(uint index) {
+        constexpr void unset(uint index) {
             word &= ~(1ull << index);
         }
 
-        const_ic_func uint count() const {
+        nd_c uint count() const {
             return __builtin_popcountll(word);
         }
 
-        ic_func BitSet64 operator|(const BitSet64 &o) const {
+        constexpr BitSet64 operator|(const BitSet64 &o) const {
             return word | o.word;
         }
 
-        ic_func BitSet64 operator&(const BitSet64 &o) const {
+        constexpr BitSet64 operator&(const BitSet64 &o) const {
             return word & o.word;
         }
 
-        ic_func explicit operator bool() const {
+        constexpr explicit operator bool() const {
             return word;
         }
 
-        ic_func BitSet64 &operator|=(const BitSet64 &o) {
+        constexpr BitSet64 &operator|=(const BitSet64 &o) {
             word |= o.word;
             return *this;
         }
 
-        ic_func BitSet64 &operator<<=(uint x) {
+        constexpr BitSet64 &operator<<=(uint x) {
             word <<= x;
             return *this;
         }
 
-        ic_func BitSet64 &operator>>=(uint x) {
+        constexpr BitSet64 &operator>>=(uint x) {
             word >>= x;
             return *this;
         }
 
-        const_ic_func BitSet64 operator^(const BitSet64 &o) const {
+        nd_c BitSet64 operator^(const BitSet64 &o) const {
             return word ^ o.word;
         }
 
         template <typename T>
-        const_ic_func T sub(uint pos, uint count) const {
+        nd_c T sub(uint pos, uint count) const {
             return (T)((word >> pos) & ((1ull << count) - 1ull));
         }
 
@@ -137,23 +135,23 @@ namespace Utils {
             using value_type        = uint;
 
             uint64_t a = 0;
-            ic_func void operator++() {
+            constexpr void operator++() {
                 a ^= -a & a;
             }
-            ic_func uint operator*() const {
+            constexpr uint operator*() const {
                 return __builtin_ctzll(a);
             }
 
-            ic_func bool operator!=(const iterator &o) const {
+            constexpr bool operator!=(const iterator &o) const {
                 return a != o.a;
             }
         };
 
-        const_ic_func iterator begin() const {
+        nd_c iterator begin() const {
             return {word};
         }
 
-        const_ic_func iterator end() const {
+        nd_c iterator end() const {
             return {0};
         }
     };
@@ -163,21 +161,21 @@ namespace Utils {
     public:
         BitSet64 _words[ceilDivide(N << 1, 64u)];
     public:
-        ic_func TwoBitArray() = default;
+        constexpr TwoBitArray() = default;
 
-        const_ic_func uint get(uint index) const {
+        nd_c uint get(uint index) const {
             return _words[index / 32].template sub<uint>(index % 32 * 2, 2);
         }
 
-        ic_func void orSet(uint index, uint v) {
+        constexpr void orSet(uint index, uint v) {
             _words[index / 32].word |= ((uint64_t)v << (index % 32 * 2));
         }
 
-        ic_func void unset(uint index) {
+        constexpr void unset(uint index) {
             _words[index / 32].word &= ~(3ull << (index % 32 * 2));
         }
 
-        ic_func void set(uint index, uint v) {
+        constexpr void set(uint index, uint v) {
             unset(index);
             if (v) orSet(index, v);
         }
@@ -199,7 +197,7 @@ namespace Game {
         RIGHT
     };
 
-    const_ic_func Direction operator!(Direction dir) {
+    nd_c Direction operator!(Direction dir) {
         switch (dir) {
             case UP: return DOWN;
             case DOWN: return UP;
@@ -220,32 +218,32 @@ namespace Game {
     struct Position {
         uint pos = -1;
 
-        ic_func Position(uint x, uint y): pos(y * WIDTH + x) {
+        constexpr Position(uint x, uint y): pos(y * WIDTH + x) {
         }
 
-        ic_func Position(uint pos): pos(pos) {
+        constexpr Position(uint pos): pos(pos) {
         }
 
         Position() = default;
 
-        ic_func operator uint() const {
+        constexpr operator uint() const {
             return pos;
         }
 
-        const_ic_func uint x() const {
+        nd_c uint x() const {
             return pos % WIDTH;
         }
 
-        const_ic_func uint y() const {
+        nd_c uint y() const {
             return pos / WIDTH;
         }
 
-        ic_func Position &translate(Direction d) {
+        constexpr Position &translate(Direction d) {
             pos += TRANSLATIONS[d];
             return *this;
         }
 
-        const_ic_func bool isBorder(Direction dir) const {
+        nd_c bool isBorder(Direction dir) const {
             switch (dir) {
                 case UP: return pos < WIDTH;
                 case DOWN: return pos >= WIDTH * (HEIGHT-1);
@@ -263,28 +261,28 @@ namespace Game {
     struct JointPosition {
         uint hash = 255;
 
-        ic_func JointPosition(Position p, bool b) {
+        constexpr JointPosition(Position p, bool b) {
             hash = (p << 1) | b;
         }
 
-        ic_func JointPosition(uint hash): hash(hash) {
+        constexpr JointPosition(uint hash): hash(hash) {
         }
 
-        ic_func JointPosition() = default;
+        constexpr JointPosition() = default;
 
-        const_ic_func Position pos() const {
+        nd_c Position pos() const {
             return hash >> 1;
         }
 
-        const_ic_func bool orientation() const {
+        nd_c bool orientation() const {
             return hash & 1;
         }
 
-        const_ic_func bool null() const {
+        nd_c bool null() const {
             return hash == 255;
         }
 
-        ic_func operator uint() const {
+        constexpr operator uint() const {
             return hash;
         }
     };
@@ -293,16 +291,16 @@ namespace Game {
 
         uint hash = 255;
 
-        ic_func Move() = default;
+        constexpr Move() = default;
 
-        ic_func Move(uint a): hash(a) {
+        constexpr Move(uint a): hash(a) {
         }
 
-        ic_func Move(Position p, uint t) {
+        constexpr Move(Position p, uint t) {
             hash = p | (t << 6);
         }
 
-        ic_func Move(const char* str): Move(Position(str[1] - 'a', str[0] - 'a'), str[2] == 'l'? 3: (str[2] == 's')? 2: 1) {
+        constexpr Move(const char* str): Move(Position(str[1] - 'a', str[0] - 'a'), str[2] == 'l'? 3: (str[2] == 's')? 2: 1) {
         }
 
         explicit operator std:: string() const {
@@ -317,11 +315,11 @@ namespace Game {
             return in;
         }
 
-        const_ic_func Position pos() const {
+        nd_c Position pos() const {
             return hash & 63u;
         }
 
-        const_ic_func uint type() const {
+        nd_c uint type() const {
             return hash >> 6;
         }
     };
@@ -336,7 +334,7 @@ namespace Game {
         // Union Find:
         constexpr const static uint AIR  = WIDTH * HEIGHT * 2;
         constexpr const static uint WALL[] {AIR+1, AIR+1, AIR+2, AIR+3};
-        const_ic_func static Direction getWallDirection(uint wallValue) {
+        nd_c static Direction getWallDirection(uint wallValue) {
             return static_cast<Direction>(wallValue - WALL[0] + 1);
         }
         struct UnionSet {
@@ -348,31 +346,31 @@ namespace Game {
 #endif
 
             UnionSet() = default;
-            ic_func UnionSet(const UnionSet&) = default;
-            ic_func UnionSet(UnionSet&&) noexcept = default;
+            constexpr UnionSet(const UnionSet&) = default;
+            constexpr UnionSet(UnionSet&&) noexcept = default;
 
-            ic_func UnionSet& operator=(UnionSet&&) noexcept = default;
+            constexpr UnionSet& operator=(UnionSet&&) noexcept = default;
 
-            const_ic_func bool getTip(JointPosition tip) const {
+            nd_c bool getTip(JointPosition tip) const {
                 return tips[0] != tip;
             }
 
-            ic_func void handleBorder(uint border) {
+            constexpr void handleBorder(uint border) {
                 if (!borders[0]) borders[0] = border;
                 else borders[1] = border;
             }
 
-            ic_func void reset() {
+            constexpr void reset() {
                 size = 1;
                 borders[0] = borders[1] = 0;
                 tips[0] = tips[1] = root;
             }
 
-            const_ic_func bool enclosed() const {
+            nd_c bool enclosed() const {
                 return borders[1];
             }
 
-            ic_func bool operator<(const UnionSet &o) const {
+            constexpr bool operator<(const UnionSet &o) const {
                 return size < o.size;
             }
         };
@@ -383,7 +381,7 @@ namespace Game {
                 JointPosition joint;
                 uint parent;
 
-                ic_func UnionParentChange(JointPosition j, uint p): joint(j), parent(p) {
+                constexpr UnionParentChange(JointPosition j, uint p): joint(j), parent(p) {
                 }
             };
 
@@ -398,7 +396,7 @@ namespace Game {
     private:
 
         uint COUNT_1 = 0;
-        const_ic_func uint findUnion(uint pos, BoardChange* change) {
+        nd_c uint findUnion(uint pos, BoardChange* change) {
             if (_union_parents[pos] == pos) return pos;
             ++COUNT_1;
             uint p = findUnion(_union_parents[pos], change);
@@ -409,12 +407,12 @@ namespace Game {
             return p;
         }
 
-        const_ic_func uint findUnionConst(uint pos) const {
+        nd_c uint findUnionConst(uint pos) const {
             if (_union_parents[pos] == pos) return pos;
             return findUnionConst(_union_parents[pos]);
         }
 
-        ic_func UnionSet* unite(JointPosition aTip, uint b, JointPosition bTip, BoardChange* change) {
+        constexpr UnionSet* unite(JointPosition aTip, uint b, JointPosition bTip, BoardChange* change) {
             uint a = findUnion(aTip, change);
             b = findUnion(b, change);
             auto A = &_union_sets[a], B = &_union_sets[b];
@@ -447,18 +445,18 @@ namespace Game {
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
 
-        const_ic_func JointPosition neighbour(Position p, Direction d) const {
+        nd_c JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
             return getJoint(p.translate(d), !d);
         }
 
-        ic_func void setPotentialScore(bool side, uint y, uint value, BoardChange* log) {
+        constexpr void setPotentialScore(bool side, uint y, uint value, BoardChange* log) {
             if (log) log->p_score_stack.emplace(y + side*HEIGHT, _potential_score[side][y]);
             _potential_score_sum[side] += value - _potential_score[side][y];
             _potential_score[side][y] = value;
         }
 
-        const_ic_func bool getBorderTip(UnionSet &set, Direction border) const {
+        nd_c bool getBorderTip(UnionSet &set, Direction border) const {
             auto pos = set.tips[0].pos();
             if (pos.isBorder(border) && ORIENTATIONS[_state_grid.get(pos)][border] == set.tips[0].orientation()) return false;
             return true;
@@ -488,23 +486,23 @@ namespace Game {
             }
         }
 
-        const_ic_func int getScore(bool s) const {
+        nd_c int getScore(bool s) const {
             return _score[s];
         }
 
-        const_ic_func uint getPotentialScore(bool s) const {
+        nd_c uint getPotentialScore(bool s) const {
             return _potential_score_sum[s];
         }
 
-        const_ic_func BitSet64 getLegalMoves() const {
+        nd_c BitSet64 getLegalMoves() const {
             return _legal_moves;
         }
 
-        const_ic_func int getTurn() const {
+        nd_c int getTurn() const {
             return _turn;
         }
 
-        const_ic_func JointPosition getJoint(Position p, Direction dir) const {
+        nd_c JointPosition getJoint(Position p, Direction dir) const {
             uint t = _state_grid.get(p);
             if (!t) return AIR;
             return {p, static_cast<bool>(ORIENTATIONS[t][dir])};
@@ -662,7 +660,7 @@ namespace Game {
             _union_sets[(change.move << 1) | 1u].reset();
         }
 
-        const_ic_func bool isOver() const {
+        nd_c bool isOver() const {
             return _game_over;
         }
 
@@ -810,7 +808,7 @@ namespace MoveFinder {
             int score[2];
             uint p_score[2];
 
-            ic_func explicit PotentialScore(bool maximizing):
+            constexpr explicit PotentialScore(bool maximizing):
                     score{maximizing ? INT32_MIN : INT32_MAX, maximizing ? INT32_MAX : INT32_MIN},
                     p_score{maximizing ? 0 : UINT32_MAX, maximizing ? 0 : UINT32_MAX} {}
 
@@ -821,7 +819,7 @@ namespace MoveFinder {
             PotentialScore() = default;
             PotentialScore(const PotentialScore&) = default;
 
-            const_ic_func bool operator>=(const PotentialScore &o) const {
+            nd_c bool operator>=(const PotentialScore &o) const {
                 return
                     score[0] > o.score[0] ||
                     (score[0] == o.score[0] && (p_score[0] > o.p_score[0] ||
@@ -829,7 +827,7 @@ namespace MoveFinder {
                     (p_score[1] == o.p_score[1] && score[1] <= o.score[1])))));
             }
 
-            const_ic_func bool operator<(const PotentialScore &o) const {
+            nd_c bool operator<(const PotentialScore &o) const {
                 return !operator>=(o);
             }
         };
