@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stack>
 #include <vector>
+#include <array>
 
 typedef uint_fast8_t uint8;
 typedef unsigned int uint;
@@ -395,10 +396,8 @@ namespace Game {
         };
     private:
 
-        uint COUNT_1 = 0;
         nd_c uint findUnion(uint pos, BoardChange* change) {
             if (_union_parents[pos] == pos) return pos;
-            ++COUNT_1;
             uint p = findUnion(_union_parents[pos], change);
             if (p != _union_parents[pos]) {
                 if (change) change->union_parent_stack.emplace(pos, _union_parents[pos]);
@@ -439,7 +438,7 @@ namespace Game {
         UnionSet _union_sets[WIDTH * HEIGHT * 2ul];
         uint _union_parents[WIDTH * HEIGHT * 2ul]{};
 
-        TwoBitArray<WIDTH * HEIGHT> _state_grid;
+        std::array<uint, WIDTH * HEIGHT> _state_grid{};
         int _score[2]{50, 50};
         uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2][HEIGHT]{};
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
@@ -458,7 +457,7 @@ namespace Game {
 
         nd_c bool getBorderTip(UnionSet &set, Direction border) const {
             auto pos = set.tips[0].pos();
-            if (pos.isBorder(border) && ORIENTATIONS[_state_grid.get(pos)][border] == set.tips[0].orientation()) return false;
+            if (pos.isBorder(border) && ORIENTATIONS[_state_grid[pos]][border] == set.tips[0].orientation()) return false;
             return true;
         }
     public:
@@ -503,7 +502,7 @@ namespace Game {
         }
 
         nd_c JointPosition getJoint(Position p, Direction dir) const {
-            uint t = _state_grid.get(p);
+            uint t = _state_grid[p];
             if (!t) return AIR;
             return {p, static_cast<bool>(ORIENTATIONS[t][dir])};
         }
@@ -517,7 +516,6 @@ namespace Game {
         }
 
         void play(Move move, BoardChange* log=nullptr) {
-            COUNT_1 = 0;
             const Position pos = move.pos();
             if (log) {
                 log->move = pos;
@@ -526,7 +524,7 @@ namespace Game {
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint type = move.type();
-            _state_grid.orSet(pos, type);
+            _state_grid[pos] = type;
             _legal_moves.unset(pos);
 
             {
@@ -639,7 +637,7 @@ namespace Game {
         void undo(BoardChange &change) {
             _turn = !_turn;
             _game_over = false;
-            _state_grid.unset(change.move);
+            _state_grid[change.move] = 0;
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
             _score[1] = change.score[1];
@@ -679,7 +677,7 @@ namespace Game {
             }
             for (uint8 y = 0; y < HEIGHT; ++y) {
                 for (uint8 x = 0; x < WIDTH; ++x) {
-                    auto type = _state_grid.get(y * WIDTH + x);
+                    auto type = _state_grid[y * WIDTH + x];
                     if (!type) continue;
 
                     r[x * box_width][y * box_height + 1] = '-';
