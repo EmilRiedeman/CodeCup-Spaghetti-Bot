@@ -66,7 +66,7 @@ namespace Utils {
         }
 
         static inline void init() {
-            RNG = new Random(1070326155);
+            RNG = new Random();
             std::cerr << *RNG << '\n';
         }
     };
