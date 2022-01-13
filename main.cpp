@@ -226,7 +226,7 @@ namespace Game {
         constexpr Position(uint pos): pos(pos) {
         }
 
-        Position() = default;
+        constexpr Position() = default;
 
         constexpr operator uint() const {
             return pos;
@@ -314,10 +314,9 @@ namespace Game {
         }
 
         friend std::istream &operator>>(std::istream &in, Move &move) {
-            char* c = new char[3];
+            std::string c;
             in >> c;
-            move.hash = Move(c).hash;
-            delete[] c;
+            move.hash = Move(c.c_str()).hash;
             return in;
         }
 
@@ -385,19 +384,24 @@ namespace Game {
 
     public:
         struct BoardChange {
-            struct UnionParentChange { // todo pair
-                JointPosition joint;
-                uint parent;
+            struct DecodeChange {
+                const uint plane = 0, mPlane = 0, pos = 0;
+                const floating_type x = 0;
 
-                constexpr UnionParentChange(JointPosition j, uint p): joint(j), parent(p) {
+                DecodeChange() = delete;
+
+                constexpr DecodeChange(uint plane, uint mPlane, uint pos, floating_type x):
+                        plane(plane), mPlane(mPlane), pos(pos), x(x)
+                {
                 }
             };
 
             Position move;
             int score[2]{};
-            vector_stack<UnionParentChange> union_parent_stack;
+            vector_stack<std::pair<JointPosition, uint>> union_parent_stack;
             vector_stack<UnionSet> union_unite_stack;
             vector_stack<std::pair<uint, uint>> p_score_stack;
+            vector_stack<DecodeChange> decoded_stack;
 
             BoardChange() = default;
         };
@@ -428,7 +432,7 @@ namespace Game {
 
             if (change) {
                 if (change->union_parent_stack.empty()
-                                || change->union_parent_stack.top().joint != a)
+                                || change->union_parent_stack.top().first != a)
                     change->union_parent_stack.emplace(a, _union_parents[a]);
                 if (a != tip) change->union_parent_stack.emplace(tip, _union_parents[tip]);
                 change->union_unite_stack.emplace(*B);
@@ -455,34 +459,95 @@ namespace Game {
             FREE,
             TYPE_R,
             TYPE_S,
-            TYPE_L
+            TYPE_L,
+
+            CONNECTED_GREY1,
+            CONNECTED_GREY2,
+            CONNECTED_GREY3,
+            CONNECTED_GREY4,
+
+            CONNECTED_LEFT1,
+            CONNECTED_LEFT2,
+            CONNECTED_LEFT3,
+            CONNECTED_LEFT4,
+
+            CONNECTED_RIGHT1,
+            CONNECTED_RIGHT2,
+            CONNECTED_RIGHT3,
+            CONNECTED_RIGHT4,
         };
+
+        constexpr static uint getConnectPlane(uint border, Direction dir) {
+            return CONNECTED_GREY1 + (border-1)*4 + dir;
+        }
 
         struct Decoder {
             typedef floating_type* Data;
 
-            constexpr static const uint planes = 4;
+            constexpr static const uint planes = 16;
 
-            Data left = new floating_type[planes*AREA];
-            Data right = new floating_type[planes*AREA];
+            Data normal = new floating_type[planes * AREA]{};
+            Data mirror = new floating_type[planes * AREA]{};
 
             constexpr Decoder() {
-                std::fill(left, left + AREA, 1);
-                std::fill(right, right + AREA, 1);
+                std::fill(normal, normal + AREA, 1);
+                std::fill(mirror, mirror + AREA, 1);
+
+                for (uint i = 0; i < HEIGHT; ++i) {
+                    setConnected(LEFT, LEFT, {0, i});
+                    setConnected(RIGHT, RIGHT,{WIDTH-1, i});
+                }
+
+                for (uint i = 0; i < WIDTH; ++i) {
+                    setConnected(UP, UP, {i, 0});
+                    setConnected(DOWN, DOWN,{i, HEIGHT-1});
+                }
             }
 
             ~Decoder() {
-                delete[] left;
-                delete[] right;
+                delete[] normal;
+                delete[] mirror;
             }
 
-            constexpr void set(uint plane, Position pos, floating_type x=1) const {
-                left[plane * AREA + pos] = x;
-                right[plane * AREA + pos.mirrorHorizontal()] = x;
+            constexpr void set(uint plane, uint mirroredPlane, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
+                if (log) log->decoded_stack.emplace(plane, mirroredPlane, pos, normal[plane * AREA + pos]);
+                normal[plane * AREA + pos] = x;
+                mirror[mirroredPlane * AREA + pos.mirrorHorizontal()] = x;
+            }
+
+            constexpr void set(uint plane, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
+                set(plane, plane, pos, x, log);
+            }
+
+            constexpr void setConnected(uint border, Direction dir, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
+                uint mDir = dir>=LEFT?! dir:dir;
+                if (border >= LEFT) {
+                    border -= 2;
+                    set(CONNECTED_LEFT1+border*4+dir, CONNECTED_RIGHT1-border*4+mDir, pos, x, log);
+                } else {
+                    set(CONNECTED_GREY1+dir, CONNECTED_GREY1+mDir, pos, x, log);
+                }
+            }
+
+            void print(std::ostream &out=std::cout) const {
+                for (uint plane = 0; plane < planes; ++plane) {
+                    if (plane % 4 == 0) out << "\n\n\n";
+                    out << plane << ":\n";
+                    for (auto arr : {normal, mirror}) {
+                        for (uint y = 0; y < HEIGHT; ++y) {
+                            for (uint x = 0; x < WIDTH; ++x) {
+                                out << arr[plane*AREA + y*WIDTH+x];
+                            }
+                            out << '\n';
+                        }
+                        out << '\n';
+                    }
+                    out << '\n';
+                }
             }
         };
 
-        const Decoder decoded{};
+        const Decoder _decoded{};
 
         nd_c JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
@@ -495,7 +560,7 @@ namespace Game {
             _potential_score[side][y] = value;
         }
 
-        nd_c bool getBorderTip(UnionSet &set, Direction border) const {
+        nd_c bool getBorderTip(const UnionSet &set, Direction border) const {
             auto pos = set.tips[0].pos();
             if (pos.isBorder(border) && ORIENTATIONS[_state_grid[pos]][border] == set.tips[0].orientation()) return false;
             return true;
@@ -537,8 +602,12 @@ namespace Game {
             return _legal_moves;
         }
 
-        nd_c int getTurn() const {
+        nd_c bool getTurn() const {
             return _turn;
+        }
+
+        nd_c const Decoder &getDecodedState() const {
+            return _decoded;
         }
 
         nd_c JointPosition getJoint(Position p, Direction dir) const {
@@ -564,8 +633,8 @@ namespace Game {
             }
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint type = move.type();
-            decoded.set(FREE, pos, 0);
-            decoded.set(type, pos);
+            _decoded.set(FREE, pos, 0);
+            _decoded.set(type, pos);
             _state_grid[pos] = type;
             _legal_moves.unset(pos);
 
@@ -575,7 +644,8 @@ namespace Game {
                 uint counts[5]{}; // 2-bit index: bit2 = set, bit1 = side; index 4 is extra count
                 uint set;
                 for (uint i = 0; i < 4u; ++i) {
-                    const JointPosition neighbourTip = neighbour(pos, SIDES[type][i]);
+                    auto dir = SIDES[type][i];
+                    const JointPosition neighbourTip = neighbour(pos, dir);
                     neighbours[i] = neighbourTip;
                     if (neighbours[i] == AIR) continue;
                     if (neighbours[i] < AIR) neighbours[i] = findUnion(neighbours[i], log);
@@ -594,6 +664,7 @@ namespace Game {
                         }
 
                         auto border = _union_sets[neighbours[i]].borders[0]; // border is WALL value
+                        if (border) _decoded.setConnected(getWallDirection(border), dir, pos, 0, log);
                         uint count_index = ((i & 1u) << 1) | (border - WALL[2]);
                         if (border > WALL[0]) { // > WALL[0] is blue/red wall
                             if (i & 2u &&
@@ -606,7 +677,10 @@ namespace Game {
                         auto united = unite(j0 | set, neighbours[i], neighbourTip, log);
                         if (sets[set] == sets[set ^ 1u]) sets[set ^ 1u] = united;
                         sets[set] = united;
-                    } else sets[set]->handleBorder(neighbours[i]);
+                    } else {
+                        sets[set]->handleBorder(neighbours[i]);
+                        _decoded.setConnected(dir, dir, pos, 0, log);
+                    }
 
                     if (sets[set]->enclosed()) {
                         if (sets[set]->borders[0] != WALL[0]) {
@@ -652,10 +726,25 @@ namespace Game {
                                 setPotentialScore(WALL[3] == s->borders[1], s->tips[!i].pos().y(), 0, log);
                             }
                         } else {
-                            if (s->borders[0] != WALL[0]) {
+                            if (s->borders[0] >= WALL[0]) {
                                 auto border = getWallDirection(s->borders[0]);
                                 bool i = getBorderTip(*s, border);
-                                setPotentialScore(border == RIGHT, s->tips[i].pos().y(), s->size + 1, log);
+                                auto otherTip = s->tips[!i];
+                                auto otherTipPos = otherTip.pos();
+
+                                for (uint side = 0; side < 2; ++side) {
+                                    auto dir = SIDES[_state_grid[otherTipPos]][side*2+otherTip.orientation()];
+                                    if (otherTipPos.isBorder(dir)) continue;
+                                    auto p = Position(otherTipPos).translate(dir);
+                                    if (!_state_grid[p]) {
+                                        _decoded.setConnected(border, !dir, p, 1, log);
+                                        //if (!log) std::cerr << p.operator std::string() << " " << !dir << " " << border << " " << getConnectPlane(border, !dir) << '\n';
+                                    }
+                                }
+
+                                if (s->borders[0] != WALL[0]) {
+                                    setPotentialScore(border == RIGHT, s->tips[i].pos().y(), s->size + 1, log);
+                                }
                             }
                         }
                     }
@@ -673,14 +762,22 @@ namespace Game {
             _game_over = !_legal_moves;
             _turn = !_turn;
 
-            //if (!log) print(std::cerr);
+            if (!log) {
+                //_decoded.print(std::cerr);
+                print(std::cerr);
+            }
         }
 
         void undo(BoardChange &change) {
             _turn = !_turn;
             _game_over = false;
-            decoded.set(FREE, change.move);
-            decoded.set(_state_grid[change.move], change.move, 0);
+            while (!change.decoded_stack.empty()) {
+                auto &d = change.decoded_stack.top();
+                _decoded.set(d.plane, d.mPlane, d.pos, d.x);
+                change.decoded_stack.pop();
+            }
+            _decoded.set(FREE, change.move);
+            _decoded.set(_state_grid[change.move], change.move, 0);
             _state_grid[change.move] = 0;
             _legal_moves.orSet(change.move);
             _score[0] = change.score[0];
@@ -691,7 +788,7 @@ namespace Game {
                 change.p_score_stack.pop();
             }
             while (!change.union_parent_stack.empty()) {
-                _union_parents[change.union_parent_stack.top().joint] = change.union_parent_stack.top().parent;
+                _union_parents[change.union_parent_stack.top().first] = change.union_parent_stack.top().second;
                 change.union_parent_stack.pop();
             }
             while (!change.union_unite_stack.empty()) {
@@ -846,7 +943,6 @@ namespace MoveFinder {
         MoveController(Game::Board<T> &board, bool side): board(board), side(side) {}
     public:
         virtual Game::Move suggest() = 0;
-
     };
 
     namespace BoardEvaluation {
@@ -1032,6 +1128,7 @@ void competition(Board &board, MF* bot) {
         }
         board.play(move);
     }
+    board.getDecodedState().print(std::cerr);
 }
 
 int main() {
@@ -1053,7 +1150,6 @@ int main() {
     if (s[0] != 'S') {
         board.play(Move(s.c_str()));
     }
-    board.print(std::cerr);
     competition(board, new MinimaxMoveController<BoardEvaluation::PotentialScore, floating_type>(board, board.getTurn()));
     std::cerr << "\n\033[m";
     return 0;
