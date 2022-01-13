@@ -1090,6 +1090,14 @@ namespace MoveFinder {
             return moves[r];
         }
     };
+
+    template <typename T>
+    class NeuralNetworkTreeSearch: public MoveController<T> {
+    public:
+        struct TreeSearchNode {
+            // todo
+        };
+    };
 }
 
 template <typename Board>
