@@ -1,9 +1,25 @@
 #include <iostream>
 #include <chrono>
-#include <algorithm>
 #include <stack>
 #include <vector>
 #include <array>
+#include <cmath>
+#include <random>
+#include <iomanip>
+#include <limits>
+#include <cassert>
+#include <utility>
+#include <functional>
+#include <fstream>
+
+//#define COMPETITION
+
+#ifndef COMPETITION
+#include <thread>
+#include <filesystem>
+//#define COLOR_BOARD
+#define USE_THREADS
+#endif
 
 typedef uint_fast8_t uint8;
 typedef unsigned int uint;
@@ -17,8 +33,6 @@ inline std::ostream &operator<<(std::ostream &out, unsigned char c) {
     return out << (int)c;
 }
 
-//#define COLOR_BOARD
-
 namespace Utils {
 
     template <typename T>
@@ -26,14 +40,43 @@ namespace Utils {
         return 1 + ((a - 1) / b);
     }
 
-    template <typename T>
-    constexpr std::pair<T&, T&> minmax(T& x, T& y) {
-        return x < y? std::pair<T&, T&>(x, y): std::pair<T&, T&>(y, x);
+    template <typename OUT=char, typename IN>
+    constexpr static inline OUT* r_cast(IN &in) {
+        return reinterpret_cast<OUT*>(&in);
     }
 
+    template <typename OUT=char, typename IN>
+    constexpr static inline const OUT* r_cast_const(const IN &in) {
+        return reinterpret_cast<const OUT*>(&in);
+    }
+
+    template <typename... Ts>
+    void swapEndian(Ts&... args) {
+        ((args = (args>>24) |
+                 ((args<<8) & 0x00FF0000) |
+                 ((args>>8) & 0x0000FF00) |
+                 (args<<24)), ...);
+    }
+
+    template <typename T>
+    constexpr T* initializeArray(std::initializer_list<T> init) {
+        auto r = new T[init.size()];
+        std::copy(init.begin(), init.end(), r);
+        return r;
+    }
+
+    template <typename T>
+    constexpr void printHardCodeArray(const T* arr, uint len, std::ostream &out, const std::string &type="T") {
+        out << std::hexfloat << "Utils::initializeArray<"<<type<<">({";
+        for (uint i = 0; i < len; ++i) {
+            out << arr[i] << ',';
+        }
+        out << "})" << std::defaultfloat;
+    }
 
     struct Random;
-    static Random* RNG;
+    static Random* RNG{};
+    static std::mt19937* RNG2{};
 
     struct Random final {
         uint seed;
@@ -68,6 +111,9 @@ namespace Utils {
         static inline void init() {
             RNG = new Random();
             std::cerr << *RNG << '\n';
+            auto seed2 = std::random_device()();
+            std::cerr << seed2 << '\n';
+            RNG2 = new std::mt19937(seed2);
         }
     };
 
@@ -184,6 +230,1888 @@ namespace Utils {
     };
 }
 
+namespace Utils::Math {
+    typedef double floating_type;
+    typedef uint32_t size_type;
+
+    struct Shape2D {
+        size_type height=1, width=1;
+
+        nd_c size_type area() const {
+            return height * width;
+        }
+
+        friend std::ostream &operator<<(std::ostream &out, const Shape2D &shape) {
+            return out << "{" + std::to_string(shape.height) + ", " + std::to_string(shape.width) + "}";
+        }
+    };
+
+    struct Shape3D {
+        size_type height=1, width=1, depth=1;
+
+        constexpr size_type volume() const {
+            return height * width * depth;
+        }
+
+        friend std::ostream &operator<<(std::ostream &out, const Shape3D &shape) {
+            return out << "{" + std::to_string(shape.height) + ", " + std::to_string(shape.width) + ", " + std::to_string(shape.depth) + "}";
+        }
+    };
+
+    namespace Matrix {
+
+        template <
+                typename MAT_P,
+                typename T_P = typename MAT_P::value_type,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static MAT_P &dotReference(
+                const MAT_A &A,
+                const MAT_B &B,
+                MAT_P &product
+        ) {
+            for (size_type j = 0; j < B.columns(); ++j) {
+                for (size_type i = 0; i < A.rows(); ++i) {
+                    product(i, j) = T_P();
+                    for (size_type index = 0; index < A.columns(); ++index) {
+                        product(i, j) += (T_P)(A(i, index) * B(index, j));
+                    }
+                }
+            }
+            return product;
+        }
+
+        template <
+                typename MAT_P,
+                typename Function1,
+                typename Function2,
+                typename T_P = typename MAT_P::value_type,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static void dotIteration(
+                const MAT_A &A,
+                const MAT_B &B,
+                MAT_P* product,
+                Function1 f1,
+                Function2 f2
+        ) {
+            for (size_type j = 0; j < B.columns(); ++j) {
+                for (size_type i = 0; i < A.rows(); ++i) {
+                    T_P t = T_P();
+                    for (size_type index = 0; index < A.columns(); ++index) {
+                        f1(i, j, index);
+                        t += static_cast<T_P>(A(i, index) * B(index, j));
+                    }
+                    f2(t, i, j);
+                    if (product) (*product)(i, j) = t;
+                }
+            }
+        }
+
+        template <
+                typename MAT_P,
+                typename T_P = typename MAT_P::value_type,
+                typename... Args,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static MAT_P dot(
+                const MAT_A &A,
+                const MAT_B &B,
+                Args&&... args
+        ) {
+            MAT_P product(std::forward<Args>(args)...);
+            dotReference<MAT_P, T_P>(A, B, product);
+            return product;
+        }
+
+        template <
+                typename MAT_S,
+                typename T_P = typename MAT_S::value_type,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static MAT_S &addReference(
+                const MAT_A &A,
+                const MAT_B &B,
+                MAT_S &sum
+        ) {
+            for (size_type i = 0; i < A.rows(); ++i) for (size_type j = 0; j < A.columns(); ++j)
+                    sum(i, j) = static_cast<T_P>(A(i, j) + B(i, j));
+            return sum;
+        }
+
+        template <
+                typename MAT_S,
+                typename T_P = typename MAT_S::value_type,
+                typename... Args,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static MAT_S add(
+                const MAT_A &A,
+                const MAT_B &B,
+                Args&&... args
+        ) {
+            MAT_S sum(std::forward<Args>(args)...);
+            addReference<MAT_S, T_P>(A, B, sum);
+            return sum;
+        }
+
+        template <
+                typename MAT_R,
+                typename T_P = typename MAT_R::value_type,
+                typename MAT_A,
+                typename MAT_B
+        >
+        constexpr static void convolve(
+                const MAT_A &A,
+                const MAT_B &kernel,
+                MAT_R &result
+        ) {
+            for (size_type ki = 0; ki < kernel.rows(); ++ki) {
+                for (size_type kj = 0; kj < kernel.columns(); ++kj) {
+                    auto kij = kernel(ki, kj);
+                    if (!kij) continue;
+                    for (size_type i = 0; i < result.rows(); ++i) { // stride with i += stride
+                        for (size_type j = 0; j < result.columns(); ++j) {
+                            result(i, j) += static_cast<T_P>(A(i+ki, j+kj) * kij);
+                        }
+                    }
+                }
+            }
+        }
+
+        template <typename MAT, typename T_M = typename MAT::value_type>
+        constexpr static void fill(MAT &matrix, const T_M &a) {
+            for (size_type i = 0; i < matrix.rows(); ++i) {
+                for (size_type j = 0; j < matrix.columns(); ++j) {
+                    matrix(i, j) = a;
+                }
+            }
+        }
+
+        template <typename R, typename MAT, typename... Args>
+        constexpr static void copy(const MAT &m, Args&&... args) {
+            R result(std::forward<Args>(args)...);
+            for (size_type i = 0; i < m.rows(); ++i) {
+                for (size_type j = 0; j < m.columns(); ++j) {
+                    result(i, j) = m(i, j);
+                }
+            }
+            return result;
+        }
+
+        template <typename MAT>
+        std::ostream &print(const MAT &matrix, std::ostream &out=std::cout) {
+            out << '{';
+            for (size_type i = 0; i < matrix.rows(); ++i) {
+                if (i) out << ' ';
+                out << '{';
+                for (size_type j = 0; j < matrix.columns(); ++j) {
+                    out << (j? ',': ' ') << "  " << matrix(i, j);
+                }
+                out << '}' << (i+1 == matrix.rows()? '}': '\n');
+            }
+            return out << '\n';
+        }
+
+        template <typename MAT> class TransposedMatrixReference;
+
+        template <typename MAT>
+        class TransposedMatrixReference {
+        public:
+            typedef MAT Matrix;
+            typedef typename Matrix::value_type value_type;
+
+        protected:
+            Matrix &ref;
+        public:
+
+            constexpr explicit TransposedMatrixReference(Matrix &matrix): ref(matrix) {
+            }
+
+            // Start Matrix Functions
+            [[nodiscard]]
+            constexpr size_type rows() const noexcept {
+                return ref.columns();
+            }
+
+            [[nodiscard]]
+            constexpr size_type columns() const noexcept {
+                return ref.rows();
+            }
+
+            // Start Operators
+            [[nodiscard]]
+            constexpr value_type &operator()(size_type i, size_type j) {
+                return ref(j, i);
+            }
+
+            [[nodiscard]]
+            constexpr const value_type &operator()(size_type i, size_type j) const {
+                return ref(j, i);
+            }
+            // End Operators
+            // End Matrix Functions
+        };
+
+        template <typename MAT>
+        class PaddedMatrixReference {
+        public:
+            typedef MAT Matrix;
+            typedef typename Matrix::value_type value_type;
+
+        protected:
+            const Matrix &ref;
+            const size_type padding;
+            const value_type padding_fill;
+        public:
+
+            constexpr PaddedMatrixReference(const Matrix &matrix, size_type padding, value_type paddingFill=0):
+                    ref(matrix), padding(padding), padding_fill(paddingFill)
+            {}
+
+            // Start Matrix Functions
+            [[nodiscard]]
+            constexpr size_type rows() const noexcept {
+                return ref.rows() + (padding << 1);
+            }
+
+            [[nodiscard]]
+            constexpr size_type columns() const noexcept {
+                return ref.columns() + (padding << 1);
+            }
+
+            // Start Operators
+            [[nodiscard]]
+            constexpr const value_type &operator()(size_type i, size_type j) const {
+                if (i-padding < ref.rows() && j-padding < ref.columns()) return ref(i-padding, j-padding);
+                return padding_fill;
+            }
+            // End Operators
+            // End Matrix Functions
+
+        };
+
+        template <typename T = floating_type>
+        class DynamicMatrix {
+        public:
+            typedef T value_type;
+
+            size_type m = 0, n = 0;
+            value_type* array = nullptr;
+
+            // Start Constructors
+            constexpr DynamicMatrix() = default;
+
+            template <typename InputIt>
+            constexpr DynamicMatrix(InputIt first, InputIt last, size_type rows):
+                    m(rows),
+                    n(std::distance(first, last) / rows),
+                    array(new value_type[std::distance(first, last)]) {
+                std::copy(first, last, array);
+            }
+            constexpr explicit DynamicMatrix(size_type rows, size_type columns):
+                    m(rows),
+                    n(columns),
+                    array(new value_type[rows * columns]) {
+            }
+
+            constexpr DynamicMatrix(const DynamicMatrix &o): DynamicMatrix(
+                    o.array,
+                    o.array + o.m * o.n,
+                    o.m) {
+                //std::cerr << "copied matrix\n";
+            }
+
+            constexpr DynamicMatrix(DynamicMatrix &&o) noexcept: m(std::move(o.m)), n(std::move(o.n)), array(o.array) {
+                o.array = nullptr;
+            }
+
+            constexpr DynamicMatrix(std::initializer_list<std::initializer_list<value_type>> l):
+                    m(l.size()), n(l.begin()->size())
+            {
+                array = new value_type[m * n];
+                for (size_type i = 0; i < l.size(); ++i) {
+                    const auto &itl = l.begin() + i;
+                    assert(("All rows must be equal sized.", itl->size() == n));
+                    std::copy<typename std::initializer_list<value_type>::const_iterator, value_type*>(
+                            itl->begin(), itl->end(), array + i * n
+                    );
+                }
+                std::cout << "created matrix " << this << '\n';
+            }
+
+            constexpr DynamicMatrix(value_type* arr, size_type m, size_type n): m(m), n(n), array(arr) {
+            }
+            // End Constructors
+
+            constexpr DynamicMatrix &operator=(const DynamicMatrix &o) noexcept {
+                std::cout << "copied matrix\n";
+                delete[] array;
+                m = o.m;
+                n = o.n;
+                array = new value_type[m * n];
+                std::copy(o.array, o.array + m * n, array);
+                //std::cout << "copied matrix " << &o << " to " << this << "\n";
+                return *this;
+            }
+
+            constexpr DynamicMatrix &operator=(DynamicMatrix &&o) noexcept {
+                // std::cout << "moved matrix\n";
+                delete[] array;
+                m = o.m;
+                n = o.n;
+                array = o.array;
+                o.array = nullptr;
+                return *this;
+            }
+
+        public:
+            ~DynamicMatrix() {
+                delete[] array;
+            }
+
+            // Start Matrix Functions
+
+            [[nodiscard]]
+            constexpr size_type rows() const noexcept {
+                return m;
+            }
+
+            [[nodiscard]]
+            constexpr size_type columns() const noexcept {
+                return n;
+            }
+
+            // Start Operators
+            [[nodiscard]]
+            constexpr value_type &operator()(size_type i, size_type j) {
+                return array[i * n + j];
+            }
+
+            [[nodiscard]]
+            constexpr const value_type &operator()(size_type i, size_type j) const {
+                return array[i * n + j];
+            }
+            // End Operators
+            // End Matrix Functions
+
+            template <
+                    typename T_O = value_type,
+                    typename T_R=T_O
+            >
+            constexpr DynamicMatrix<T_R> operator*(const DynamicMatrix<T_O> &other) const {
+                return dot<DynamicMatrix<T_R>, T_R>(*this, other, m, other.n);
+            }
+
+            inline friend std::ostream &operator<<(std::ostream &out, const DynamicMatrix &matrix) {
+                return print(matrix);
+            }
+        };
+
+        template <typename T = floating_type, bool IS_COLUMN_VECTOR=true>
+        class DynamicVector {
+        public:
+            typedef T value_type;
+
+            static constexpr const bool vector_type = IS_COLUMN_VECTOR;
+
+            size_type n = 0;
+            value_type* array = nullptr;
+
+            // Start Constructors
+            constexpr DynamicVector() = default;
+
+            template <typename InputIt>
+            constexpr DynamicVector(InputIt first, InputIt last):
+                    n(std::distance(first, last)),
+                    array(new value_type[std::distance(first, last)]) {
+                std::copy(first, last, array);
+            }
+            constexpr explicit DynamicVector(size_type _n):
+                    n(_n),
+                    array(new value_type[_n]) {
+            }
+
+            constexpr DynamicVector(const DynamicVector &o): DynamicVector(o.array, o.array + o.n) {
+                std::cerr << "copied vector\n";
+            }
+
+            constexpr DynamicVector(DynamicVector &&o) noexcept: n(std::move(o.n)), array(o.array) {
+                o.array = nullptr;
+            }
+
+            constexpr DynamicVector(std::initializer_list<value_type> l):
+                    DynamicVector(l.begin(), l.end()) {
+            }
+
+            constexpr DynamicVector(value_type* arr, size_type n): n(n), array(arr) {
+            }
+            // End Constructors
+
+            constexpr DynamicVector &operator=(const DynamicVector &o) noexcept {
+                std::cout << "copied vector\n";
+                delete[] array;
+                n = o.n;
+                array = new value_type[n];
+                std::copy(o.array, o.array + n, array);
+                return *this;
+            }
+
+            constexpr DynamicVector &operator=(DynamicVector &&o) noexcept {
+                //std::cout << "moved vector\n";
+                delete[] array;
+                n = o.n;
+                array = o.array;
+                o.array = nullptr;
+                return *this;
+            }
+
+        public:
+            ~DynamicVector() {
+                delete[] array;
+            }
+
+            // Start Matrix Functions
+
+            [[nodiscard]]
+            constexpr size_type rows() const noexcept {
+                return vector_type? n: 1;
+            }
+
+            [[nodiscard]]
+            constexpr size_type columns() const noexcept {
+                return vector_type? 1: n;
+            }
+
+            // Start Operators
+            [[nodiscard]]
+            constexpr value_type &operator()(size_type i, size_type j) {
+                return array[i + j];
+            }
+
+            [[nodiscard]]
+            constexpr const value_type &operator()(size_type i, size_type j) const {
+                return array[i + j];
+            }
+            // End Operators
+            // End Matrix Functions
+
+            [[nodiscard]]
+            constexpr value_type &operator[](size_type i) {
+                return array[i];
+            }
+
+            [[nodiscard]]
+            constexpr const value_type &operator[](size_type i) const {
+                return array[i];
+            }
+
+            inline friend std::ostream &operator<<(std::ostream &out, const DynamicVector &matrix) {
+                return print(matrix, out);
+            }
+        };
+    }
+
+    template <typename T>
+    Matrix::DynamicVector<T> dirichlet(T alpha, uint size, std::mt19937 &gen) {
+        Matrix::DynamicVector<T> result(size);
+        std::gamma_distribution<> gamma(alpha, 1);
+        T sum = 0;
+        for (uint i = 0; i < size; ++i) sum += (result[i] = gamma(gen));
+        for (uint i = 0; i < size; ++i) result[i] /= sum;
+        return result;
+    }
+}
+
+namespace DeepLearning {
+    using namespace Utils::Math;
+    using namespace Utils::Math::Matrix;
+
+    template <typename T = floating_type>
+    class Network;
+
+    template <typename T = floating_type>
+    class LayerBlock;
+
+    namespace Optimizers {
+        template <typename T>
+        struct Optimizer {
+            typedef T value_type;
+
+            virtual ~Optimizer() = default;
+
+            virtual void updateSingleWeight(value_type &w, value_type grad) = 0;
+            virtual void preUpdate() = 0;
+            virtual void postEpoch() = 0;
+            virtual void printStats(std::ostream &out) const = 0;
+        };
+
+        template <typename T>
+        struct SGD : public Optimizer<T> {
+            typedef Optimizer<T> Base;
+            typedef typename Base::value_type value_type;
+
+            double learning_rate, decay;
+
+            explicit SGD(double learning_rate, double decay_factor=1.0): learning_rate(learning_rate), decay(decay_factor) {}
+
+            SGD(const SGD &o) = default;
+
+            ~SGD() override {
+                this->printStats(std::cerr);
+            }
+
+            void updateSingleWeight(value_type &w, value_type grad) override {
+                w -= grad*learning_rate;
+            }
+
+            void postEpoch() override {
+                learning_rate *= decay;
+            }
+
+            void preUpdate() override {
+            }
+
+            void printStats(std::ostream &out) const override {
+                out << "SGD Destructed:\n learning rate: " << learning_rate << ", decay: " << decay << std::endl << std::defaultfloat;
+            }
+        };
+
+        template <typename T>
+        struct Adam : public Optimizer<T> {
+            typedef Optimizer<T> Base;
+            typedef typename Base::value_type value_type;
+
+            double learning_rate, beta1, beta2, eps;
+            const double init_lr;
+
+            value_type* m,* v;
+
+            uint updates = 0, currentParam = 0;
+
+            explicit Adam(size_type totalParams, double learning_rate=.001, double beta1=.9, double beta2=.999, double eps=1e-7):
+                    learning_rate(learning_rate), beta1(beta1), beta2(beta2), eps(eps), init_lr(learning_rate) {
+                m = new value_type[totalParams*2];
+                v = m + totalParams;
+                std::fill(m, m+totalParams*2, 0.0);
+            }
+
+            ~Adam() override {
+                delete[] m;
+                this->printStats(std::cerr);
+            }
+
+            void updateSingleWeight(value_type &w, value_type grad) override {
+                m[currentParam] = beta1 * m[currentParam] + (1.0 - beta1) * grad;
+                v[currentParam] = beta2 * v[currentParam] + (1.0 - beta2) * grad * grad;
+
+                w -= learning_rate * m[currentParam] / (std::sqrt(v[currentParam]) + eps);
+
+                ++currentParam;
+            }
+
+            void postEpoch() override {
+            }
+
+            void preUpdate() override {
+                currentParam = 0;
+                if (updates)
+                    learning_rate = init_lr * sqrt(1.0 - std::pow(beta2, updates)) / (1.0 - std::pow(beta1, updates));
+                ++updates;
+            }
+
+            void printStats(std::ostream &out) const override {
+                out << "Adam Destructed:\n updates: " << updates << ", initial learning rate: ";
+                out << init_lr << ", current learning rate: ";
+                out << learning_rate << ", beta1: ";
+                out << beta1 << ", beta2: ";
+                out << beta2 << ", eps: ";
+                out << eps << std::endl;
+                out << std::defaultfloat;
+            }
+        };
+    }
+
+    namespace Activation {
+        enum ActivationType: uint {
+            SIGMOID = 1,
+            RELU = 2,
+            SOFTMAX = 3,
+            TANH = 4
+        };
+
+        template<
+                typename T
+        >
+        struct Sigmoid {
+            typedef T value_type;
+            typedef value_type* Data;
+
+            constexpr static value_type sigmoid(value_type x) {
+                return 1.0 / (1.0 + std::exp(-x));
+            }
+
+            constexpr static void f(Data in, Data out, size_type n) {
+                std::transform(in, in + n, out, sigmoid);
+            }
+
+            constexpr static void fd(Data out, Data deltaIn, Data deltaOut, size_type n) {
+                for (size_type i = 0; i < n; ++i) deltaOut[i] = out[i] * (1.0 - out[i]) * deltaIn[i];
+            }
+        };
+
+        template<
+                typename T
+        >
+        struct Tanh {
+            typedef T value_type;
+            typedef value_type* Data;
+
+            constexpr static void f(Data in, Data out, size_type n) {
+                for (size_type i = 0; i < n; ++i) out[i] = std::tanh(in[i]);
+            }
+
+            constexpr static void fd(Data out, Data deltaIn, Data deltaOut, size_type n) {
+                for (size_type i = 0; i < n; ++i) deltaOut[i] = (1.0 - out[i]*out[i]) * deltaIn[i];
+            }
+        };
+
+        template<
+                typename T
+        >
+        struct ReLU {
+            typedef T value_type;
+            typedef value_type* Data;
+
+            constexpr static void f(Data in, Data out, size_type n) {
+                for (size_type i = 0; i < n; ++i) out[i] = in[i] > 0.0? in[i]: 0.0;
+            }
+
+            constexpr static void fd(Data out, Data deltaIn, Data deltaOut, size_type n) {
+                for (size_type i = 0; i < n; ++i) deltaOut[i] = out[i]? deltaIn[i]: 0.0;
+            }
+        };
+
+        template<
+                typename T
+        >
+        struct SoftMax {
+            typedef T value_type;
+            typedef value_type* Data;
+
+            constexpr static void f(Data in, Data out, size_type n) {
+                value_type sum = 0.0, max = *std::max_element(in, in+n);
+                for (size_type i = 0; i < n; ++i) {
+                    sum += (out[i] = std::exp(in[i] - max));
+                }
+                for (size_type i = 0; i < n; ++i) {
+                    //std::cout << "out: " << out[i] << " = exp(" << in[i] << " - max)\n";
+                    out[i] /= sum;
+                }
+            }
+
+            constexpr static void fd(Data out, Data deltaIn, Data deltaOut, size_type n) {
+                value_type jac;
+                for (size_type i = 0; i < n; ++i) {
+                    deltaOut[i] = 0.0;
+                    if (!deltaIn[i]) continue;
+                    for (size_type j = 0; j < n; ++j) {
+                        jac = i == j? out[i] * (1.0 - out[i]): -out[i] * out[j];
+                        deltaOut[i] += jac * out[j];
+                    }
+                    deltaOut[i] *= deltaIn[i];
+                }
+            }
+        };
+
+        template <typename T>
+        static constexpr
+        std::pair<
+                std::function<void(T*, T*, size_type)>,
+                std::function<void(T*, T*, T*, size_type)>
+        > getActivation(ActivationType t) {
+            switch (t) {
+                case SIGMOID:
+                    return {Sigmoid<T>::f, Sigmoid<T>::fd};
+                case RELU:
+                    return {ReLU<T>::f, ReLU<T>::fd};
+                case SOFTMAX:
+                    return {SoftMax<T>::f, SoftMax<T>::fd};
+                case TANH:
+                    return {Tanh<T>::f, Tanh<T>::fd};
+                default:
+                    return {nullptr, nullptr};
+            }
+        }
+
+        static constexpr const char* getActivationName(ActivationType t) {
+            switch (t) {
+                case SIGMOID:
+                    return "Sigmoid";
+                case RELU:
+                    return "ReLU";
+                case SOFTMAX:
+                    return "SoftMax";
+                case TANH:
+                    return "Tanh";
+                default:
+                    return "";
+            }
+        }
+    }
+
+    namespace Initializers {
+        template <typename MAT, typename T_M = typename MAT::value_type>
+        constexpr static void xavier(MAT &matrix, size_type fanIn, size_type fanOut, std::mt19937 &gen) {
+            const T_M xv = 2.449489742783178 / std::sqrt(static_cast<T_M>(fanIn + fanOut));
+            std::uniform_real_distribution<T_M> dis(-xv, xv);
+            for (size_type i = 0; i < matrix.rows(); ++i) {
+                for (size_type j = 0; j < matrix.columns(); ++j) {
+                    matrix(i, j) = dis(gen);
+                }
+            }
+        }
+    }
+
+    template <
+            typename T = floating_type
+    >
+    class Layer {
+    public:
+        typedef T value_type;
+        typedef value_type* Data;
+        typedef DynamicMatrix<value_type> Matrix;
+        typedef DynamicVector<value_type> Vector;
+
+    protected:
+        constexpr explicit Layer(const Shape3D &outputSize, size_type params, const char* name): output_size(outputSize), params(params), name(name) {}
+
+        virtual void forward(Data, Data) const = 0;
+        virtual void backward(Data, Data, Data, Data) const = 0;
+        virtual void updateParameters(Optimizers::Optimizer<value_type> &optimizer) = 0;
+        virtual void printHardCodeInitializer(std::ostream &) const = 0;
+    public:
+        const Shape3D output_size;
+        const size_type params;
+        const std::string name;
+
+        virtual ~Layer() = default;
+
+        virtual std::ofstream &save(std::ofstream&) const = 0;
+
+        friend class Network<value_type>;
+        friend class LayerBlock<value_type>;
+    };
+
+    enum LayerType : char {
+        DENSE = 0,
+        CONV2D = 1,
+        ACTIVATION = 2,
+        MAXPOOL2D = 3
+    };
+
+    template <typename T>
+    class DenseLayer : public Layer<T> {
+    public:
+        typedef T value_type;
+        typedef Layer<value_type> Base;
+
+        typedef typename Base::Data Data;
+        typedef typename Base::Matrix Matrix;
+        typedef typename Base::Vector Vector;
+    protected:
+        Matrix weight{};
+        Vector bias{};
+
+    public:
+        mutable Matrix _delta_weight;
+        mutable Vector _delta_bias;
+
+        constexpr DenseLayer(size_type inputSize, size_type outputSize, Data weights):
+                Base({outputSize}, outputSize*inputSize+outputSize, "Dense"),
+                _delta_weight(outputSize, inputSize),
+                _delta_bias(outputSize)
+        {
+            weight = Matrix(weights, outputSize, inputSize);
+            bias = Vector(weights + inputSize * outputSize, outputSize);
+            fill(_delta_weight, 0);
+            fill(_delta_bias, 0);
+
+            /*std::cout << "loading dense\n";
+            print(weight);
+            print(bias);
+            std::cout << inputSize << '\n';
+            std::cout << outputSize << '\n';
+            std::cout << Base::params << '\n';*/
+        }
+
+        constexpr DenseLayer(
+                size_type inputSize,
+                size_type outputSize,
+                std::mt19937 &gen,
+                const std::function<void(Matrix&, size_type, size_type, std::mt19937&)> &initializer=Initializers::xavier<Matrix>
+        ):
+                Base({outputSize}, outputSize*inputSize+outputSize, "Dense"),
+                _delta_weight(outputSize, inputSize),
+                _delta_bias(outputSize)
+        {
+            auto weights = new value_type[inputSize * outputSize + outputSize];
+            weight = Matrix(weights, outputSize, inputSize);
+            bias = Vector(weights + inputSize * outputSize, outputSize);
+
+            initializer(weight, inputSize, outputSize, gen);
+            fill(bias, 0);
+
+            fill(_delta_weight, 0);
+            fill(_delta_bias, 0);
+
+            /*std::cout << "making dense\n";
+            print(weight);
+            print(bias);
+            std::cout << inputSize << '\n';
+            std::cout << outputSize << '\n';
+            std::cout << Base::params << '\n';*/
+        }
+
+        ~DenseLayer() override {
+            bias.array = nullptr;
+        }
+
+        void forward(Data _in, Data _out) const override {
+            Vector in(_in, weight.columns());
+            Vector out(_out, bias.rows());
+            dotIteration(weight, in, &out,
+                         [](size_type, size_type, size_type) noexcept {},
+                         [this](value_type &p, size_type i, size_type j) noexcept {
+                             p += this->bias[i];
+                         }
+            );
+            in.array = out.array = nullptr;
+        }
+
+        void backward(Data _in, Data, Data _deltaIn, Data _deltaOut) const override {
+            Vector in(_in, weight.columns()), deltaIn(_deltaIn, bias.rows());
+            Vector deltaOut(_deltaOut, weight.columns());
+            dotIteration(TransposedMatrixReference(weight), deltaIn, &deltaOut,
+                         [this, &in, &deltaIn](size_type i, size_type j, size_type index) noexcept {
+                             _delta_weight(index, i) += deltaIn[index] * in[i];
+                             if (!i) _delta_bias[index] += deltaIn[index];
+                         },
+                         [](value_type, size_type, size_type) noexcept {
+                         }
+            );
+            in.array = deltaIn.array = deltaOut.array = nullptr;
+        }
+
+        void updateParameters(Optimizers::Optimizer<value_type> &optimizer) override {
+            for (size_type i = 0; i < weight.rows(); ++i) {
+                optimizer.updateSingleWeight(bias[i], _delta_bias[i]);
+                _delta_bias[i] = 0;
+                for (size_type j = 0; j < weight.columns(); ++j) {
+                    optimizer.updateSingleWeight(weight(i, j), _delta_weight(i, j));
+                    _delta_weight(i, j) = 0;
+                }
+            }
+        }
+
+        std::ofstream &save(std::ofstream& out) const override {
+            using Utils::r_cast_const;
+
+            out.put(DENSE);
+
+            auto size_in = weight.columns();
+            auto size_out = bias.rows();
+            out.write(r_cast_const(size_in), sizeof(size_type));
+            out.write(r_cast_const(size_out), sizeof(size_type));
+
+            out.write(r_cast_const(*weight.array), Base::params*sizeof(value_type));
+            out.flush();
+            return out;
+        }
+
+        constexpr static DenseLayer* load(std::ifstream& in) {
+            using Utils::r_cast;
+
+            size_type size_in=0, size_out=0;
+
+            in.read(r_cast(size_in), sizeof(size_type));
+            in.read(r_cast(size_out), sizeof(size_type));
+
+            auto params = size_in * size_out + size_out;
+            auto weights = new value_type[params];
+            in.read(r_cast(*weights), params*sizeof(value_type));
+
+            return new DenseLayer(size_in, size_out, weights);
+        }
+
+        void printHardCodeInitializer(std::ostream &out) const override {
+            out << "new DenseLayer<T>("<<weight.columns()<<", "<<Base::output_size.volume()<<", ";
+            Utils::printHardCodeArray(weight.array, Base::params, out);
+            out << ')';
+        }
+    };
+
+    template <typename T>
+    class Conv2D : public Layer<T> {
+    public:
+        typedef T value_type;
+        typedef Layer<value_type> Base;
+
+        typedef typename Base::Data Data;
+        typedef typename Base::Matrix Matrix;
+        typedef typename Base::Vector Vector;
+    protected:
+        const Shape3D input_size;
+        const Shape2D kernel_size;
+        const size_type padding = 0;
+
+        DynamicMatrix<Matrix> kernels;
+        Vector bias{};
+    public:
+        mutable DynamicMatrix<Matrix> _delta_kernels;
+        mutable Vector _delta_bias{};
+
+        constexpr Conv2D(
+                const Shape3D &input_size,
+                const Shape2D &kernel_size,
+                size_type planes_out,
+                size_type padding,
+                Data weights
+        ): // <----- :)
+                Base(
+                        {
+                                input_size.height - kernel_size.height + 1 + padding * 2,
+                                input_size.width - kernel_size.width + 1 + padding * 2,
+                                planes_out
+                        }, planes_out*input_size.depth*kernel_size.area()+planes_out, "Conv2D"),
+                input_size(input_size),
+                kernel_size(kernel_size),
+                padding(padding),
+                kernels(planes_out, input_size.depth),
+                bias(planes_out),
+                _delta_kernels(planes_out, input_size.depth)
+        {
+            auto params = input_size.depth * planes_out * kernel_size.area() + planes_out;
+            auto grad = new value_type[params];
+
+            std::fill(grad, grad + params, 0);
+
+            bias = Vector(weights + params - planes_out, planes_out);
+            _delta_bias = Vector(grad + params - planes_out, planes_out);
+
+            //std::cout << "loading conv\n";
+            size_type ki = 0;
+            for (size_type i = 0; i < planes_out; ++i) {
+                for (size_type j = 0; j < input_size.depth; ++j) {
+                    kernels(i, j) = Matrix(weights + ki * kernel_size.area(), kernel_size.height, kernel_size.width);
+                    //print(kernels(i, j));
+                    _delta_kernels(i, j) = Matrix(grad + ki * kernel_size.area(), kernel_size.height, kernel_size.width);
+                    ++ki;
+                }
+            }
+        }
+
+        constexpr Conv2D(
+                const Shape3D &input_size,
+                const Shape2D &kernel_size,
+                size_type planes_out,
+                std::mt19937 &gen,
+                size_type padding=0,
+                const std::function<void(Matrix&, size_type, size_type, std::mt19937&)> &initializer=Initializers::xavier<Matrix>
+        ):
+                Base(
+                        {
+                                input_size.height - kernel_size.height + 1 + padding * 2,
+                                input_size.width - kernel_size.width + 1 + padding * 2,
+                                planes_out
+                        }, planes_out*input_size.depth*kernel_size.area()+planes_out, "Conv2D"),
+                input_size(input_size),
+                kernel_size(kernel_size),
+                padding(padding),
+                kernels(planes_out, input_size.depth),
+                _delta_kernels(planes_out, input_size.depth)
+        {
+            auto params = Base::params;
+            auto weights = new value_type[params];
+            auto grad = new value_type[params];
+
+            std::fill(grad, grad + params, 0);
+
+            bias = Vector(weights + params - planes_out, planes_out);
+            _delta_bias = Vector(grad + params - planes_out, planes_out);
+
+            size_type
+                    fanIn = input_size.depth * kernel_size.width * kernel_size.height,
+                    fanOut = input_size.depth * kernel_size.width * kernel_size.height;
+            //std::cout << "making conv\n";
+            size_type ki = 0;
+            for (size_type i = 0; i < planes_out; ++i) {
+                bias[i] = 0;
+                for (size_type j = 0; j < input_size.depth; ++j) {
+                    kernels(i, j) = Matrix(weights + ki * kernel_size.area(), kernel_size.height, kernel_size.width);
+                    initializer(kernels(i, j), fanIn, fanOut, gen);
+                    //print(kernels(i, j));
+
+                    _delta_kernels(i, j) = Matrix(grad + ki * kernel_size.area(), kernel_size.height, kernel_size.width);
+
+                    ++ki;
+                }
+            }
+        }
+
+        ~Conv2D() override {
+            delete[] kernels(0, 0).array;
+            delete[] _delta_kernels(0, 0).array;
+            for (size_type i = 0; i < Base::output_size.depth; ++i) {
+                for (size_type j = 0; j < input_size.depth; ++j) {
+                    kernels(i, j).array = nullptr;
+                    _delta_kernels(i, j).array = nullptr;
+                }
+            }
+            bias.array = nullptr;
+            _delta_bias.array = nullptr;
+        }
+
+        void forward(Data _in, Data _out) const override {
+            size_type volume = Base::output_size.height * Base::output_size.width;
+
+            Matrix out(_out, Base::output_size.height, Base::output_size.width);
+            Matrix in(_in, input_size.height, input_size.width);
+            for (size_type output_plane = 0; output_plane < kernels.rows(); ++output_plane) {
+                out.array = _out + volume * output_plane;
+                std::fill(out.array, out.array + volume, bias[output_plane]);
+                for (size_type input_plane = 0; input_plane < kernels.columns(); ++input_plane) {
+                    const Matrix &kernel = kernels(output_plane, input_plane);
+                    in.array = _in + input_size.width * input_size.height * input_plane;
+                    if (padding) convolve(PaddedMatrixReference(in, padding), kernel, out);
+                    else convolve(in, kernel, out);
+                }
+            }
+            out.array = nullptr;
+            in.array = nullptr;
+        }
+
+        void backward(Data _in, Data, Data _deltaIn, Data _deltaOut) const override {
+            size_type
+                    output_width  = Base::output_size.width,
+                    output_height = Base::output_size.height;
+
+            std::fill(_deltaOut, _deltaOut + input_size.volume(), 0);
+            for (size_type output_plane = 0; output_plane < kernels.rows(); ++output_plane) {
+                Matrix deltaIn(_deltaIn + output_width * output_height * output_plane, output_height, output_width);
+                for (size_type i = 0; i < output_height; ++i) {
+                    for (size_type j = 0; j < output_width; ++j) {
+                        value_type deltaInIJ = deltaIn(i, j);
+                        if (!deltaInIJ) continue;
+                        _delta_bias[output_plane] += deltaInIJ;
+                        for (size_type input_plane = 0; input_plane < kernels.columns(); ++input_plane) {
+                            Matrix in(
+                                    _in + input_size.width * input_size.height * input_plane,
+                                    input_size.height, input_size.width);
+                            Matrix deltaOut(
+                                    _deltaOut + input_size.width * input_size.height * input_plane,
+                                    input_size.height, input_size.width);
+                            for (size_type ki = 0; ki < kernel_size.height; ++ki) {
+                                for (size_type kj = 0; kj < kernel_size.width; ++kj) {
+                                    size_type y = i + ki - padding, x = j + kj - padding;
+                                    if (y >= input_size.height || x >= input_size.width) continue;
+                                    _delta_kernels(output_plane, input_plane)(ki, kj) += deltaInIJ * in(y, x);
+                                    deltaOut(y, x) += deltaInIJ * kernels(output_plane, input_plane)(ki, kj);
+                                }
+                            }
+                            deltaOut.array = in.array = nullptr;
+                        }
+                    }
+                }
+                deltaIn.array = nullptr;
+            }
+        }
+
+        void updateParameters(Optimizers::Optimizer<value_type> &optimizer) override {
+            for (size_type i = 0; i < kernels.rows(); ++i) {
+                optimizer.updateSingleWeight(bias[i], _delta_bias[i]);
+                _delta_bias[i] = 0;
+                for (size_type j = 0; j < kernels.columns(); ++j) {
+                    for (size_type ki = 0; ki < kernel_size.height; ++ki) {
+                        for (size_type kj = 0; kj < kernel_size.width; ++kj) {
+                            optimizer.updateSingleWeight(kernels(i, j)(ki, kj), _delta_kernels(i, j)(ki, kj));
+                            _delta_kernels(i, j)(ki, kj) = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        std::ofstream &save(std::ofstream& out) const override {
+            using Utils::r_cast_const;
+
+            out.put(CONV2D);
+
+            out.write(r_cast_const(input_size), sizeof(input_size));
+            out.write(r_cast_const(kernel_size), sizeof(kernel_size));
+            out.write(r_cast_const(bias.n), sizeof(size_type));
+            out.write(r_cast_const(padding), sizeof(size_type));
+
+            out.write(r_cast_const(*kernels(0, 0).array), Base::params*sizeof(value_type));
+            out.flush();
+            return out;
+        }
+
+        static Conv2D* load(std::ifstream& in) {
+            using Utils::r_cast;
+
+            Shape3D input_size;
+            Shape2D kernel_size;
+            size_type planes_out = 0;
+            size_type padding = 0;
+
+            in.read(r_cast(input_size), sizeof(input_size));
+            in.read(r_cast(kernel_size), sizeof(kernel_size));
+            in.read(r_cast(planes_out), sizeof(size_type));
+            in.read(r_cast(padding), sizeof(size_type));
+
+            auto params = planes_out*input_size.depth*kernel_size.area()+planes_out;
+            auto weights = new value_type[params];
+            in.read(r_cast(*weights), params*sizeof(value_type));
+
+            return new Conv2D(input_size, kernel_size, planes_out, padding, weights);
+        }
+
+        void printHardCodeInitializer(std::ostream &out) const override {
+            out << "new Conv2D<T>("<<input_size<<", "<<kernel_size<<", "<<kernels.rows()<<", "<<padding<<", ";
+            Utils::printHardCodeArray(kernels(0, 0).array, Base::params, out);
+            out << ')';
+        }
+    };
+
+    template <typename T>
+    class MaxPool2D : public Layer<T> {
+    public:
+        typedef T value_type;
+        typedef Layer<value_type> Base;
+
+        typedef typename Base::Data Data;
+        typedef typename Base::Matrix Matrix;
+    protected:
+        const Shape3D input_size;
+        const Shape2D kernel_size;
+
+    public:
+        constexpr MaxPool2D(Shape3D inputSize, Shape2D kernelSize):
+                Base({
+                             Utils::ceilDivide(inputSize.height, kernelSize.height),
+                             Utils::ceilDivide(inputSize.width, kernelSize.width),
+                             inputSize.depth
+                     }, 0, "MaxPool2D"), input_size(inputSize), kernel_size(kernelSize) {
+            //std::cout << "loaded max pool\n";
+            //std::cout << kernel_size.height << ' ' << kernel_size.width << '\n';
+            //std::cout << input_size.height << ' ' << input_size.width << ' ' << input_size.depth << '\n';
+        }
+
+        void forward(Data _in, Data _out) const override {
+            size_type
+                    volumeIn  = input_size.height  * input_size.width,
+                    volumeOut = Base::output_size.height * Base::output_size.width;
+            std::fill(_out, _out + Base::output_size.volume(), -std::numeric_limits<value_type>::max());
+            for (size_type plane = 0; plane < input_size.depth; ++plane) {
+                Matrix in(_in + volumeIn * plane, input_size.height, input_size.width);
+                Matrix out(_out + volumeOut * plane, Base::output_size.height, Base::output_size.width);
+                for (size_type i = 0; i < in.rows(); ++i) {
+                    size_type iOut = i/kernel_size.height;
+                    for (size_type j = 0; j < in.columns(); ++j) {
+                        size_type jOut = j/kernel_size.width;
+                        if (in(i, j) > out(iOut, jOut)) out(iOut, jOut) = in(i, j);
+                    }
+                }
+                in.array = out.array = nullptr;
+            }
+        }
+
+        void backward(Data _in, Data _out, Data _deltaIn, Data _deltaOut) const override {
+            size_type
+                    volumeIn  = input_size.height  * input_size.width,
+                    volumeOut = Base::output_size.height * Base::output_size.width;
+            for (size_type plane = 0; plane < input_size.depth; ++plane) {
+                Matrix in(_in + volumeIn * plane, input_size.height, input_size.width);
+                Matrix deltaOut(_deltaOut + volumeIn * plane, input_size.height, input_size.width);
+
+                Matrix out(_out + volumeOut * plane, Base::output_size.height, Base::output_size.width);
+                Matrix deltaIn(_deltaIn + volumeOut * plane, Base::output_size.height, Base::output_size.width);
+
+                for (size_type i = 0; i < deltaIn.rows(); ++i) {
+                    size_type iIn = i*kernel_size.height;
+                    for (size_type j = 0; j < deltaIn.columns(); ++j) {
+                        size_type jIn = j*kernel_size.width;
+                        auto dIn = deltaIn(i, j);
+                        for (size_type ki = 0; ki < kernel_size.height; ++ki) {
+                            for (size_type kj = 0; kj < kernel_size.width; ++kj) {
+                                deltaOut(iIn + ki, jIn + kj) = (out(i, j) == in(iIn + ki, jIn + kj)? dIn: 0);
+                            }
+                        }
+                    }
+                }
+                in.array = out.array = deltaIn.array = deltaOut.array = nullptr;
+            }
+        }
+
+        void updateParameters(Optimizers::Optimizer<value_type> &optimizer) override {
+        }
+
+        std::ofstream &save(std::ofstream& out) const override {
+            using Utils::r_cast_const;
+
+            out.put(MAXPOOL2D);
+
+            out.write(r_cast_const(input_size), sizeof(input_size));
+            out.write(r_cast_const(kernel_size), sizeof(kernel_size));
+
+            return out;
+        }
+
+        constexpr static MaxPool2D* load(std::ifstream& in) {
+            using Utils::r_cast;
+
+            Shape3D inputSize{};
+            Shape2D kernelSize{};
+
+            in.read(r_cast(inputSize), sizeof(inputSize));
+            in.read(r_cast(kernelSize), sizeof(kernelSize));
+
+            return new MaxPool2D(inputSize, kernelSize);
+        }
+
+        void printHardCodeInitializer(std::ostream &out) const override {
+            out << "new MaxPool2D<T>("<<input_size<<", "<<kernel_size<<")";
+        }
+    };
+
+    template <typename T>
+    class ActivationLayer : public Layer<T> {
+    public:
+        typedef T value_type;
+        typedef Layer<value_type> Base;
+
+        typedef typename Base::Data Data;
+    protected:
+        const size_type size;
+        const Activation::ActivationType type;
+        const std::pair<std::function<void(Data, Data, size_type)>, std::function<void(Data, Data, Data, size_type)>> functions;
+
+    public:
+
+        constexpr ActivationLayer(Shape3D input, Activation::ActivationType type):
+                Base(input, 0, Activation::getActivationName(type)),
+                size(input.volume()),
+                type(type),
+                functions(std::move(Activation::getActivation<value_type>(type))) {
+            //std::cout << "loaded ActivationLayer\n";
+            //std::cout << input.height << ' ' << input.width << ' ' << input.depth << '\n';
+            //std::cout << type << '\n';
+        }
+
+        void forward(Data _in, Data _out) const override {
+            functions.first(_in, _out, size);
+        }
+
+        void backward(Data, Data _out, Data _deltaIn, Data _deltaOut) const override {
+            functions.second(_out, _deltaIn, _deltaOut, size);
+        }
+
+        void updateParameters(Optimizers::Optimizer<value_type> &optimizer) override {
+        }
+
+        std::ofstream &save(std::ofstream& out) const override {
+            using Utils::r_cast_const;
+
+            out.put(ACTIVATION);
+
+            out.write(r_cast_const(Base::output_size), sizeof(Base::output_size));
+            out.put((char)type);
+
+            return out;
+        }
+
+        constexpr static ActivationLayer* load(std::ifstream& in) {
+            using Utils::r_cast;
+
+            Shape3D input{};
+            char type{};
+
+            in.read(r_cast(input), sizeof(input));
+            in.read(r_cast(type), sizeof(type));
+
+            return new ActivationLayer(input, static_cast<Activation::ActivationType>(type));
+        }
+
+        void printHardCodeInitializer(std::ostream &out) const override {
+            out << "new ActivationLayer<T>("<<Base::output_size<<", static_cast<Activation::ActivationType>("<<type<<"))";
+        }
+    };
+
+    struct LayerInit {
+        LayerType type;
+        size_type size[6];
+        uint flags = 0;
+
+        template <typename T>
+        Layer<T>* create(Shape3D inputSize, std::mt19937 &gen) const {
+            switch (type) {
+                case DENSE:
+                    return new DenseLayer<T>(inputSize.volume(), size[0], gen);
+                case CONV2D:
+                    return new Conv2D<T>
+                            (
+                                    inputSize,
+                                    {size[0], size[1]},
+                                    size[2],
+                                    gen,
+                                    size[3]
+                            );
+                case MAXPOOL2D:
+                    return new MaxPool2D<T>(inputSize, {size[0], size[1]});
+                case ACTIVATION:
+                    return new ActivationLayer<T>(inputSize, static_cast<Activation::ActivationType>(flags));
+            }
+            return nullptr;
+        }
+
+        template <typename T>
+        static Layer<T>* open(std::ifstream &file) {
+            LayerType type{};
+            file.read(Utils::r_cast(type), sizeof(type));
+            switch (type) {
+                case DENSE:
+                    return DenseLayer<T>::load(file);
+                case CONV2D:
+                    return Conv2D<T>::load(file);
+                case MAXPOOL2D:
+                    return MaxPool2D<T>::load(file);
+                case ACTIVATION:
+                    return ActivationLayer<T>::load(file);
+            }
+            return nullptr;
+        }
+    };
+
+    namespace Loss {
+        struct MSE {
+            constexpr static const uint gradLayerSkip = 0;
+
+            template <typename T>
+            static double eval(T* predictions, T* labels, size_type n) {
+                double result = 0.0;
+                for (size_type i = 0; i < n; ++i) {
+                    auto d = predictions[i] - labels[i];
+                    result += d*d;
+                }
+                return .5 * result;
+            }
+
+            template <typename T>
+            static void derivative(T* predictions, T* labels, size_type n, T* result) {
+                for (size_type i = 0; i < n; ++i) {
+                    result[i] = (predictions[i] - labels[i]);
+                }
+            }
+        };
+
+        struct MSETanh {
+            constexpr static const size_type gradLayerSkip = 1;
+
+            template <typename T>
+            static double eval(T* predictions, T* labels, size_type n) {
+                return MSE::eval(predictions, labels, n);
+            }
+
+            template <typename T>
+            static void derivative(T* predictions, T* labels, size_type n, T* result) {
+                for (size_type i = 0; i < n; ++i) {
+                    result[i] = (predictions[i] - labels[i]) * (1.0 - predictions[i]*predictions[i]);
+                }
+            }
+        };
+
+        struct CrossEntropySoftmax {
+            constexpr static const size_type gradLayerSkip = 1;
+
+            template <typename T>
+            static double eval(T* predictions, T* labels, size_type n) {
+                double result = 0.0;
+                for (size_type i = 0; i < n; ++i) {
+                    //std::cout << labels[i] << ' ' << predictions[i] << '\n';
+                    result += labels[i]*std::log(predictions[i]);
+                }
+                //std::cout << "\n\n";
+                return -result;
+            }
+
+            template <typename T>
+            static void derivative(T* predictions, T* labels, size_type n, T* result) {
+                //auto labelSum = std::accumulate<T*, T>(labels, labels+n, 0);
+                for (size_type i = 0; i < n; ++i) {
+                    result[i] = predictions[i] - labels[i];
+                }
+            }
+        };
+
+        template <typename T>
+        struct Loss {
+            mutable size_type gradLayerSkip=0;
+            mutable std::function<double(T*, T*, size_type)> eval;
+            mutable std::function<void(T*, T*, size_type, T*)> derivative;
+
+            constexpr Loss() = default;
+            constexpr Loss(const Loss &) = default;
+            constexpr Loss &operator=(const Loss &) = default;
+
+            template <typename LOSS>
+            static Loss create() {
+                return {LOSS::gradLayerSkip, LOSS::template eval<T>, LOSS::template derivative<T>};
+            }
+        };
+    }
+
+    template <typename T>
+    class LayerBlock {
+    public:
+        typedef T value_type;
+        typedef value_type* Data;
+
+        const Shape3D input_size;
+        const size_type size, output_blocks;
+        LayerBlock** next;
+        Data* buffers{}, * full_cache{};
+    protected:
+        size_type buffer_size = 0, full_cache_size = 0, params = 0;
+        Layer<value_type>** layers;
+    public:
+        static void getLastOutputBlocks(LayerBlock* root, LayerBlock** output_blocks) {
+            size_type i = 0;
+            std::vector<LayerBlock<value_type>*> stack{root};
+            while (!stack.empty()) {
+                LayerBlock<value_type>* back = stack.back();
+                stack.pop_back();
+                if (back->output_blocks) {
+                    for (size_type j = back->output_blocks-1; j < back->output_blocks; --j) stack.push_back(back->next[j]);
+                } else output_blocks[i++] = back;
+            }
+        }
+
+        LayerBlock(Shape3D input_size, size_type size, size_type output_blocks, Layer<value_type>** layers):
+                input_size(input_size),
+                size(size),
+                output_blocks(output_blocks),
+                next(new LayerBlock*[output_blocks]),
+                buffer_size(input_size.volume()),
+                layers(layers)
+        {
+            for (size_type i = 0; i < size; ++i) {
+                params += layers[i]->params;
+                buffer_size = std::max(buffer_size, layers[i]->output_size.volume());
+                full_cache_size += layers[i]->output_size.volume();
+            }
+
+            buffers = createBuffers();
+        }
+
+        void printHardCodeInitializer(std::ostream &out, const std::string &varName) {
+            out << "auto " << varName << " = new LayerBlock<T>("<<input_size<<", "<<size<<", "<<output_blocks<<", new Layer<T>*["<<size<<"]{\n";
+            for (size_type i = 0; i < size; ++i) {
+                out << "    ";
+                layers[i]->printHardCodeInitializer(out);
+                out << ",\n";
+            }
+            out << "});\n";
+            for (size_type output = 0; output < output_blocks; ++output) {
+                next[output]->printHardCodeInitializer(out, varName + "->next[" + std::to_string(output) + "]");
+            }
+        }
+
+        static LayerBlock* createLayerBlock(
+                const Shape3D input_size,
+                std::initializer_list<LayerInit> init,
+                std::mt19937 &gen,
+                size_type output_blocks=0)
+        {
+            auto output_size = input_size;
+            auto layers = new Layer<value_type>*[init.size()];
+            size_type i = 0;
+            for (auto l : init) {
+                layers[i] = l.create<T>(output_size, gen);
+                output_size = layers[i]->output_size;
+
+                ++i;
+            }
+
+            return new LayerBlock(input_size, init.size(), output_blocks, layers);
+        }
+
+        static LayerBlock* load(Shape3D input_size, std::ifstream &in) {
+            size_type output_blocks, size;
+
+            in.read(Utils::r_cast(output_blocks), sizeof(output_blocks));
+            in.read(Utils::r_cast(size), sizeof(size));
+
+            auto layers = new Layer<value_type>*[size];
+            for (uint i = 0; i < size; ++i) layers[i] = LayerInit::open<value_type>(in);
+
+            auto r = new LayerBlock(input_size, size, output_blocks, layers);
+            for (size_type i = 0; i < output_blocks; ++i) r->next[i] = load(layers[size-1]->output_size, in);
+            return r;
+        }
+
+        void save(std::ofstream &out) const {
+            out.write(Utils::r_cast_const(output_blocks), sizeof(output_blocks));
+            out.write(Utils::r_cast_const(size), sizeof(size));
+            for (size_type i = 0; i < size; ++i) layers[i]->save(out);
+            for (size_type i = 0; i < output_blocks; ++i) next[i]->save(out);
+        }
+
+        LayerBlock(const LayerBlock&) = delete;
+
+        LayerBlock(const LayerBlock &o, bool fullCache):
+                input_size(o.input_size),
+                size(o.size),
+                output_blocks(o.output_blocks),
+                next(new LayerBlock*[output_blocks]),
+                buffer_size(o.buffer_size),
+                full_cache_size(o.full_cache_size),
+                params(o.params),
+                layers(new Layer<value_type>*[size])
+        {
+            std::copy(o.layers, o.layers + size, layers);
+
+            for (size_type i = 0; i < output_blocks; ++i) next[i] = new LayerBlock(*o.next[i], fullCache);
+
+            buffers = createBuffers();
+            if (fullCache) full_cache = createFullCache();
+        }
+
+        ~LayerBlock() {
+            freeBuffers();
+            freeFullCache();
+            delete[] layers;
+            for (size_type i = 0; i < output_blocks; ++i) delete next[i];
+            delete[] next;
+        }
+
+        nd_c Data* createBuffers() const {
+            auto memory = new value_type[buffer_size * 2];
+            return new Data[2]{memory, memory + buffer_size};
+        }
+
+        nd_c Data* createFullCache() const {
+            auto mem = new value_type[full_cache_size];
+            auto r = new Data[size + 1];
+            r[0] = nullptr;
+            size_type p = 0;
+            for (uint i = 0; i < size; ++i) {
+                r[i+1] = mem + p;
+                p += layers[i]->output_size.volume();
+            }
+            return r;
+        }
+
+        void freeLayers() const {
+            for (size_type i = 0; i < size; ++i) delete layers[i];
+            for (size_type i = 0; i < output_blocks; ++i) next[i]->freeLayers();
+        }
+
+        void freeBuffers() const {
+            delete[] *buffers;
+            delete[] buffers;
+        }
+
+        void freeFullCache() const {
+            if (full_cache) {
+                delete[] full_cache[1];
+                delete[] full_cache;
+            }
+        }
+
+        nd_c Data getForwardOutput() const {
+            return buffers[size&1u];
+        }
+
+        nd_c Shape3D getOutputSize() const {
+            return layers[size-1]->output_size;
+        }
+
+        nd_c size_type getAmountLastOutputBlocks() const {
+            if (!output_blocks) return 1;
+            size_type a = 0;
+            for (size_type i = 0; i < output_blocks; ++i) a += next[i]->getAmountLastOutputBlocks();
+            return a;
+        }
+
+        nd_c size_type getTotalParameters() const {
+            size_type a = params;
+            for (size_type i = 0; i < output_blocks; ++i) a += next[i]->getTotalParameters();
+            return a;
+        }
+
+        void forward(Data in) const {
+            layers[0]->forward(in, buffers[1]);
+            size_type i = 1;
+            for (; i < size; ++i) {
+                layers[i]->forward(buffers[i&1u], buffers[!(i&1u)]);
+            }
+            Data out = getForwardOutput();
+            for (size_type j = 0; j < output_blocks; ++j) {
+                next[j]->forward(out);
+            }
+        }
+
+        void forwardCached(Data in) const {
+            full_cache[0] = in;
+            size_type i = 0;
+            for (; i < size; ++i) {
+                auto layer = layers[i];
+                layer->forward(full_cache[i], full_cache[i + 1]);
+            }
+            Data out = full_cache[size];
+            for (size_type j = 0; j < output_blocks; ++j) {
+                next[j]->forwardCached(out);
+            }
+        }
+
+        double singleBackward(Data labels, const Loss::Loss<value_type> &loss) const {
+            auto eval = loss.eval(full_cache[size], labels, layers[size - 1]->output_size.volume());
+
+            size_type i = size-1-loss.gradLayerSkip;
+            loss.derivative(full_cache[size], labels, layers[size - 1]->output_size.volume(), buffers[i & 1u]);
+            for (; i < size; --i) {
+                auto layer = layers[i];
+                layer->backward(full_cache[i], full_cache[i + 1], buffers[i & 1u], buffers[!(i & 1u)]);
+            }
+            return eval;
+        }
+
+        Data backwardRecursive() const {
+            if (!output_blocks) return buffers[1];
+            const size_type outputSize = getOutputSize().volume();
+            size_type i = size-1;
+            std::fill(buffers[i & 1u], buffers[i & 1u] + outputSize, 0);
+            for (size_type j = 0; j < output_blocks; ++j) {
+                Data deltaIn = next[j]->backwardRecursive();
+                for (size_type k = 0; k < outputSize; ++k) {
+                    buffers[i & 1u][k] += deltaIn[k];
+                }
+            }
+            for (; i < size; --i) {
+                auto layer = layers[i];
+                layer->backward(full_cache[i], full_cache[i + 1], buffers[i & 1u], buffers[!(i & 1u)]);
+            }
+            return buffers[1];
+        }
+
+        void updateParameters(Optimizers::Optimizer<value_type> &optimizer) {
+            for (size_type i = 0; i < size; ++i) layers[i]->updateParameters(optimizer);
+            for (size_type j = 0; j < output_blocks; ++j) next[j]->updateParameters(optimizer);
+        }
+
+        void print(std::ostream &out, int width) const {
+            for (size_type i = 0; i < size; ++i) {
+                Layer<value_type>* layer = layers[i];
+                out << std::left
+                    << std::setw(width) << layer->name
+                    << std::setw(width) << layer->output_size
+                    << std::setw(width) << layer->params
+                    << std::endl;
+                if (i!=size-1) out << std::string(width*3, '_') << std::endl;
+            }
+            out << std::string(width*3, '=') << std::endl;
+            if (!output_blocks) out << " OUTPUT" << std::endl;
+            else out << " CONNECTED BLOCKS:" << std::endl;
+            for (size_type j = 0; j < output_blocks; ++j) next[j]->print(out, width);
+        }
+    };
+
+    template <typename T>
+    class Network {
+    public:
+        typedef T value_type;
+
+        typedef value_type* Data;
+        typedef DynamicVector<value_type> Vector;
+        typedef LayerBlock<value_type> Layers;
+
+    public:
+        const Shape3D input_size;
+        size_type total_params, outputs;
+        Optimizers::Optimizer<value_type>* optimizer = nullptr;
+
+        Layers* input_block, ** output_blocks;
+
+    public:
+        explicit Network(Layers* block):
+                input_size(block->input_size),
+                total_params(block->getTotalParameters()),
+                outputs(block->getAmountLastOutputBlocks()),
+                input_block(block),
+                output_blocks(new Layers*[outputs])
+        {
+            Layers::getLastOutputBlocks(input_block, output_blocks);
+        }
+
+        ~Network() {
+            input_block->freeLayers();
+            delete input_block;
+            delete optimizer;
+        }
+
+        nd_c size_type getTotalParams() const {
+            return total_params;
+        }
+
+        void setOptimizer(Optimizers::Optimizer<value_type>* newOptimizer) {
+            delete optimizer;
+            optimizer = newOptimizer;
+        }
+
+        DynamicVector<Vector> forward(Data in, Layers* root=nullptr, Layers** outputBlocks=nullptr) const {
+            if (!root) {
+                root = input_block;
+                outputBlocks = output_blocks;
+            }
+            root->forward(in);
+            DynamicVector<Vector> r(outputs);
+            for (size_type i = 0; i < outputs; ++i) {
+                auto block = outputBlocks[i];
+                auto out = block->getForwardOutput();
+                r[i] = Vector(out, out+block->getOutputSize().volume());
+            }
+            return r;
+        }
+
+        DynamicVector<double> forwardBackward(Data in, Data* labels, const DynamicVector<Loss::Loss<value_type>> &loss, Layers* root, Layers** outputBlocks) {
+            DynamicVector<double> r(outputs);
+            root->forwardCached(in);
+
+            for (size_type i = 0; i < outputs; ++i) {
+                r[i] = outputBlocks[i]->singleBackward(labels[i], loss[i]);
+            }
+            root->backwardRecursive();
+
+            return r;
+        }
+
+        template<typename SET>
+        void train(SET &dataSet, uint epochs, uint miniBatchSizePerThread, const DynamicVector<Loss::Loss<value_type>> &loss, uint numThreads=1) {
+            assert(optimizer != nullptr);
+            const size_type miniBatchSize = miniBatchSizePerThread*numThreads, batchesPerEpoch = Utils::ceilDivide(dataSet.size, miniBatchSize);
+
+#ifdef USE_THREADS
+            auto threads = new std::thread[numThreads];
+#endif
+            auto blocksIn = new Layers*[numThreads]{};
+            auto blocksOut = new Layers**[numThreads]{};
+
+            DynamicVector<double> trainLoss(outputs);
+
+            for (size_type i = 0; i < numThreads; ++i) {
+                blocksIn[i] = new Layers(*input_block, true);
+                blocksOut[i] = new Layers*[outputs];
+                Layers::getLastOutputBlocks(blocksIn[i], blocksOut[i]);
+            }
+
+            auto dev = std::random_device();
+            std::mt19937 gen(dev());
+            auto sequence = new uint[dataSet.size];
+            std::iota(sequence, sequence + dataSet.size, 0);
+
+            auto f = [this, &dataSet, &miniBatchSizePerThread, &sequence, &trainLoss, &loss, &blocksIn, &blocksOut](uint thread, uint begin) {
+                size_type end = std::min(begin+miniBatchSizePerThread, dataSet.size);
+                for (size_type i = begin; i < end; ++i) {
+                    size_type imageID = sequence[i];
+                    auto input = dataSet.getInput(imageID);
+                    auto labels = dataSet.getLabel(imageID);
+                    auto l = forwardBackward(input, labels.array, loss, blocksIn[thread], blocksOut[thread]);
+                    addReference(trainLoss, l, trainLoss);
+                }
+            };
+
+            for (size_type epoch = 0; epoch < epochs; ++epoch) {
+                std::shuffle(sequence, sequence+dataSet.size, gen);
+                fill(trainLoss, 0);
+
+                for (uint miniBatch = 0; miniBatch < batchesPerEpoch; ++miniBatch) {
+                    for (uint i = 0; i < numThreads; ++i) {
+#ifdef USE_THREADS
+                        threads[i] = std::thread(f, i, miniBatch*miniBatchSize + i*miniBatchSizePerThread);
+#else
+                        f(i, miniBatch*miniBatchSize + i*miniBatchSizePerThread);
+#endif
+                    }
+#ifdef USE_THREADS
+                    for (uint i = 0; i < numThreads; ++i)
+                        threads[i].join();
+#endif
+                    std::cout << "mini batch no. " << miniBatch << " done!\n";
+                    updateParameters();
+                }
+
+                std::cerr << "Epoch: " << epoch+1 << ", average train loss: [";
+                for (size_type i = 0; i < outputs; ++i) {
+                    std::cerr << trainLoss[i] / (double)dataSet.size;
+                    if (i+1 != outputs) std::cerr << ", ";
+                }
+                std::cerr << "]" << std::endl;
+                optimizer->postEpoch();
+            }
+
+            for (size_type i = 0; i < numThreads; ++i) {
+                delete blocksIn[i];
+            }
+#ifdef USE_THREADS
+            delete[] threads;
+#endif
+            delete[] blocksIn;
+            delete[] blocksOut;
+            delete[] sequence;
+        }
+
+        void updateParameters() {
+            optimizer->preUpdate();
+            input_block->updateParameters(*optimizer);
+        }
+
+        void print(std::ostream &out=std::cout) {
+            const int width = 16;
+            out << "Input Size: " << input_size << "\n";
+            out << "Output Blocks: " << outputs << "\n";
+            out << "Total Params: " << total_params << "\n\n";
+            out << std::left << std::setw(width) << "Layer" << std::setw(width) << "Output Size" << std::setw(width) << "Parameters" << std::endl;
+            out << std::string(width*3, '=') << std::endl;
+            input_block->print(out, width);
+        }
+
+        void printHardCodeInitializer(std::ostream &out, const std::string &varName="network") {
+            auto root = varName + "Root";
+            input_block->printHardCodeInitializer(out, root);
+            out << "auto " << varName << " = new Network<T>(" << root << ");\n";
+        }
+
+        void save(std::ofstream &out) const {
+            out.write(Utils::r_cast_const(input_size), sizeof(input_size));
+            input_block->save(out);
+        }
+
+        static Network<value_type>* load(std::ifstream &in) {
+            Shape3D input_size;
+
+            in.read(Utils::r_cast(input_size), sizeof(input_size));
+
+            return new Network<value_type>(Layers::load(input_size, in));
+        }
+    };
+}
+
 namespace Game {
     using Utils::TwoBitArray;
     using Utils::BitSet64;
@@ -245,8 +2173,8 @@ namespace Game {
             return *this;
         }
 
-        nd_c Position mirrorHorizontal() const {
-            return WIDTH-x()-1 + WIDTH*y();
+        nd_c static Position mirrorHorizontal(Position p) {
+            return WIDTH-p.x()-1 + WIDTH*p.y();
         }
 
         nd_c bool isBorder(Direction dir) const {
@@ -318,6 +2246,10 @@ namespace Game {
             in >> c;
             move.hash = Move(c.c_str()).hash;
             return in;
+        }
+
+        nd_c bool operator==(const Move &o) const {
+            return hash == o.hash;
         }
 
         nd_c Position pos() const {
@@ -397,7 +2329,7 @@ namespace Game {
             };
 
             Position move;
-            int score[2]{};
+            int score = 0;
             vector_stack<std::pair<JointPosition, uint>> union_parent_stack;
             vector_stack<UnionSet> union_unite_stack;
             vector_stack<std::pair<uint, uint>> p_score_stack;
@@ -454,7 +2386,9 @@ namespace Game {
         uint _potential_score_sum[2] = {HEIGHT, HEIGHT}, _potential_score[2][HEIGHT]{};
         BitSet64 _legal_moves = (1ull << (WIDTH * HEIGHT)) - 1ull;
         bool _turn = false, _game_over = false;
+        Move _last_move{};
 
+    public:
         enum Plane : uint {
             FREE,
             TYPE_R,
@@ -476,6 +2410,7 @@ namespace Game {
             CONNECTED_RIGHT3,
             CONNECTED_RIGHT4,
         };
+        constexpr static const uint planes = 16;
 
         constexpr static uint getConnectPlane(uint border, Direction dir) {
             return CONNECTED_GREY1 + (border-1)*4 + dir;
@@ -483,8 +2418,6 @@ namespace Game {
 
         struct Decoder {
             typedef floating_type* Data;
-
-            constexpr static const uint planes = 16;
 
             Data normal = new floating_type[planes * AREA]{};
             Data mirror = new floating_type[planes * AREA]{};
@@ -509,14 +2442,14 @@ namespace Game {
                 delete[] mirror;
             }
 
+            nd_c Data getPerspective(bool side) const {
+                return side? mirror: normal;
+            }
+
             constexpr void set(uint plane, uint mirroredPlane, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
                 if (log) log->decoded_stack.emplace(plane, mirroredPlane, pos, normal[plane * AREA + pos]);
                 normal[plane * AREA + pos] = x;
-                mirror[mirroredPlane * AREA + pos.mirrorHorizontal()] = x;
-            }
-
-            constexpr void set(uint plane, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
-                set(plane, plane, pos, x, log);
+                mirror[mirroredPlane * AREA + Position::mirrorHorizontal(pos)] = x;
             }
 
             constexpr void setConnected(uint border, Direction dir, Position pos, floating_type x=1, BoardChange* log=nullptr) const {
@@ -527,6 +2460,11 @@ namespace Game {
                 } else {
                     set(CONNECTED_GREY1+dir, CONNECTED_GREY1+mDir, pos, x, log);
                 }
+            }
+
+            constexpr void setTileState(uint type, Position pos, bool x=true, BoardChange* log=nullptr) const {
+                set(FREE + type, 4-type, pos, x);
+                set(FREE, FREE, pos, !x, log);
             }
 
             void print(std::ostream &out=std::cout) const {
@@ -548,6 +2486,8 @@ namespace Game {
         };
 
         const Decoder _decoded{};
+
+    private:
 
         nd_c JointPosition neighbour(Position p, Direction d) const {
             if (p.isBorder(d)) return WALL[d];
@@ -610,6 +2550,10 @@ namespace Game {
             return _decoded;
         }
 
+        nd_c Move getLastMove() const {
+            return _last_move;
+        }
+
         nd_c JointPosition getJoint(Position p, Direction dir) const {
             uint t = _state_grid[p];
             if (!t) return AIR;
@@ -628,13 +2572,11 @@ namespace Game {
             const Position pos = move.pos();
             if (log) {
                 log->move = pos;
-                log->score[0] = _score[0];
-                log->score[1] = _score[1];
-            }
+                log->score = _score[_turn];
+            } else _last_move = move;
             const uint j0 = pos << 1, j1 = j0 | 1u;
             const uint type = move.type();
-            _decoded.set(FREE, pos, 0);
-            _decoded.set(type, pos);
+            _decoded.setTileState(type, pos);
             _state_grid[pos] = type;
             _legal_moves.unset(pos);
 
@@ -764,7 +2706,7 @@ namespace Game {
 
             if (!log) {
                 //_decoded.print(std::cerr);
-                print(std::cerr);
+                //print(std::cerr);
             }
         }
 
@@ -776,12 +2718,10 @@ namespace Game {
                 _decoded.set(d.plane, d.mPlane, d.pos, d.x);
                 change.decoded_stack.pop();
             }
-            _decoded.set(FREE, change.move);
-            _decoded.set(_state_grid[change.move], change.move, 0);
+            _decoded.setTileState(_state_grid[change.move], change.move, false);
             _state_grid[change.move] = 0;
             _legal_moves.orSet(change.move);
-            _score[0] = change.score[0];
-            _score[1] = change.score[1];
+            _score[_turn] = change.score;
             while (!change.p_score_stack.empty()) {
                 uint i = change.p_score_stack.top().first;
                 setPotentialScore(i >= HEIGHT, i % HEIGHT, change.p_score_stack.top().second, nullptr);
@@ -937,12 +2877,24 @@ namespace MoveFinder {
     class MoveController {
     public:
         const bool side;
+        Game::Board<T>* board;
     protected:
-        Game::Board<T> &board;
-
-        MoveController(Game::Board<T> &board, bool side): board(board), side(side) {}
+        explicit MoveController(bool side): side(side) {}
     public:
         virtual Game::Move suggest() = 0;
+        virtual ~MoveController() = default;
+    };
+
+    template <typename T>
+    class RandomBot : public MoveController<T> {
+    public:
+        typedef MoveController<T> Base;
+
+        RandomBot(bool side): Base(side) {}
+
+        Game::Move suggest() override {
+            return Base::board->randomMove();
+        }
     };
 
     namespace BoardEvaluation {
@@ -1035,10 +2987,10 @@ namespace MoveFinder {
 
         uint depth = 3;
 
-        MinimaxMoveController(Game::Board<T> &board, bool side): MoveController<T>(board, side) {}
+        MinimaxMoveController(bool side): Base(side) {}
 
         Game::Move suggest() override {
-            uint count = Base::board.getLegalMoves().count();
+            uint count = Base::board->getLegalMoves().count();
             if (count <= 25) depth = 4;
             if (count <= 13) depth = 5;
             if (count <= 10) depth = 6;
@@ -1053,14 +3005,14 @@ namespace MoveFinder {
             Utils::BitSet64 currentSlice = Base::side? slice2: slice1;
             while (i < Game::WIDTH) {
                 //std::cerr << std::bitset<64>(currentSlice.word) << '\n';
-                for (auto pos : Base::board.getLegalMoves() & currentSlice) {
+                for (auto pos : Base::board->getLegalMoves() & currentSlice) {
                     //std::cerr << (std::string)Game::Position(pos) << ',';
                     for (uint t = 1; t < 4; ++t) {
                         Game::Move m(pos, t);
                         //std::cerr << (std::string)m << '\n';
-                        Base::board.play(m, &undo);
-                        auto next = minimax<Evaluation>(Base::board, Base::side, depth-1, false, alpha);
-                        Base::board.undo(undo);
+                        Base::board->play(m, &undo);
+                        auto next = minimax<Evaluation>(*Base::board, Base::side, depth-1, false, alpha);
+                        Base::board->undo(undo);
 
                         if (next >= bestScore) {
                             if (bestScore < next) {
@@ -1094,9 +3046,259 @@ namespace MoveFinder {
     template <typename T>
     class NeuralNetworkTreeSearch: public MoveController<T> {
     public:
-        struct TreeSearchNode {
-            // todo
+        typedef MoveController<T> Base;
+        typedef T floating_type;
+        typedef floating_type* Data;
+
+        typedef Game::Board<floating_type> Board;
+        typedef Game::Move Move;
+
+        template <typename S>
+        using Vector = Utils::Math::Matrix::DynamicVector<S>;
+
+        typedef Vector<floating_type> FloatVector;
+        typedef DeepLearning::Network<floating_type> Network;
+        typedef DeepLearning::LayerBlock<floating_type> LayerBlock;
+
+        constexpr const static floating_type
+                explorationRate = 6,
+                dirichletAlpha = 0.03,
+                weightPrior = 4,
+                weightDirichlet = 1;
+
+        struct TreeNode {
+            uint visits = 0, not_fully_visited;
+            int total_score_gain = 0, score_gain = 0;
+            floating_type value = 0, prior;
+            Move move;
+
+            TreeNode* parent = nullptr;
+            std::vector<TreeNode*> children{};
+
+            constexpr explicit TreeNode(uint legalMoves):
+                    not_fully_visited(legalMoves*3), prior(0), move{}, parent(nullptr) {}
+
+            constexpr TreeNode(TreeNode &parent, Move move, floating_type prior):
+                    not_fully_visited(parent.not_fully_visited-3), prior(prior), move(move), parent(&parent)
+            {
+                parent.children.push_back(this);
+            }
+
+            ~TreeNode() {
+                while (!children.empty()) {
+                    delete children.back();
+                    children.pop_back();
+                }
+            }
+
+            TreeNode* free(Game::Move m) {
+                TreeNode* r = nullptr;
+
+                while (!children.empty()) {
+                    auto child = children.back();
+                    if (child->move == m) r = child;
+                    else delete child; // <----- :)
+                    children.pop_back();
+                }
+                delete this;
+                return r;
+            }
+
+            nd_c floating_type expectedValue() const {
+                if (visits == 0) return 0;
+                return (value + total_score_gain*5) / visits;
+            }
+
+            nd_c floating_type score() const {
+                return expectedValue() + explorationRate * prior * std::sqrt(parent->visits) / (visits + 1);
+            }
+
+            nd_c TreeNode* selectChild() const {
+                TreeNode* best = nullptr;
+                floating_type score = 0;
+
+                for (const auto &child : children) {
+                    auto s = child->score();
+                    if (!best || s > score) {
+                        score = s;
+                        best = child;
+                    }
+                }
+
+                return best;
+            }
+
+            constexpr void recordVisit(floating_type v, int s) {
+                s += score_gain;
+                if (parent) {
+                    ++parent->visits;
+                    if (parent->parent) parent->parent->recordVisit(v, s);
+                }
+                if (!visits) score_gain = s;
+                total_score_gain += s;
+                value += v;
+                ++visits;
+            }
+
+            void addNoise() {
+                auto randomness = Utils::Math::dirichlet(dirichletAlpha, children.size(), *Utils::RNG2);
+                for (uint i = 0; i < children.size(); ++i) {
+                    auto child = children[i];
+                    child->prior = (child->prior * weightPrior + randomness[i] * weightDirichlet) / (weightPrior + weightDirichlet);
+                }
+            }
         };
+
+        constexpr const static uint input_size = Game::AREA * Game::Board<T>::planes, output_size = Game::AREA * 3;
+
+        struct Experience {
+            floating_type score = 0;
+            Data
+                input = new floating_type[input_size],
+                prior_label = new floating_type[output_size]{};
+
+            ~Experience() {
+                delete[] input;
+                delete[] prior_label;
+            }
+        };
+
+        struct Collector {
+            std::vector<Experience*> vec{};
+
+            constexpr void complete(int finalScore) {
+                for (auto e : vec) (e->score = finalScore - e->score) /= 40.;
+            }
+        };
+
+        struct DataSet {
+            std::vector<Experience*> e;
+            uint size = 0;
+
+            ~DataSet() {
+                for (auto i : e) delete i;
+            }
+
+            nd_c Data getInput(uint i) const {
+                return e[i]->input;
+            }
+
+            nd_c Vector<Data> getLabel(uint i) const {
+                return {e[i]->prior_label, &e[i]->score};
+            }
+
+            void add(const std::vector<Experience*> &v) {
+                std::copy(v.cbegin(), v.cend(), std::back_inserter(e));
+            }
+        };
+
+        Collector* collector;
+
+        Network &network;
+        LayerBlock *input, **output;
+
+        uint rollouts = 1200;
+        TreeNode* root = nullptr;
+
+        NeuralNetworkTreeSearch(bool side, Network &network, Collector* collector=nullptr):
+                Base(side), collector(collector), network(network),
+                input(new LayerBlock(*network.input_block, false)), output(new LayerBlock*[network.outputs])
+        {
+            LayerBlock::getLastOutputBlocks(input, output);
+        }
+
+        ~NeuralNetworkTreeSearch() override {
+            delete root;
+            delete input;
+            delete[] output;
+        }
+
+        Move suggest() override {
+            if (root) root = root->free(Base::board->getLastMove());
+            if (!root) {
+                root = new TreeNode(Base::board->getLegalMoves().count());
+            } else {
+                root->parent = nullptr;
+            }
+            if (!root->visits) {
+                root->recordVisit(branchOut(*root), 0);
+            }
+
+            root->addNoise();
+
+            std::array<typename Board::BoardChange, Game::AREA> changes;
+            for (uint i = 0; i < rollouts; ++i) {
+                if (!root->not_fully_visited) break;
+                TreeNode* node = root;
+
+                uint depth = 0;
+                int scoreGain = 0;
+                while (node->visits && node->not_fully_visited) {
+                    node = node->selectChild();
+                    auto pre = Base::board->getScore(Base::board->getTurn());
+                    Base::board->play(node->move, &changes[depth++]);
+                    scoreGain = Base::board->getScore(!Base::board->getTurn()) - pre;
+                }
+
+                if (!node->visits) {
+                    auto value = branchOut(*node);
+                    if (!node->not_fully_visited) {
+                        TreeNode* n = node;
+                        while ((n = n->parent)) {
+                            if (--n->not_fully_visited) break;
+                        }
+                    }
+                    node->recordVisit(value, scoreGain);
+                } node->recordVisit(0, 0);
+
+                for (--depth; depth <= Game::AREA; --depth) Base::board->undo(changes[depth]); // todo remove unnecessary undo
+            }
+
+            if (collector) {
+                bool turn = Base::board->getTurn();
+                auto e = new Experience{(floating_type)Base::board->getScore(turn)};
+                auto in = Base::board->getDecodedState().getPerspective(turn);
+                std::copy(in, in + input_size, e->input);
+                for (auto child : root->children) {
+                    auto move = child->move;
+                    auto pos = turn? Game::Position::mirrorHorizontal(move.pos()): move.pos();
+                    uint t = turn? (3-move.type()): (move.type()-1);
+                    e->prior_label[pos*3+t] = child->visits/(floating_type)root->visits;
+                }
+                collector->vec.push_back(e);
+            }
+
+            auto move = Move();
+            auto visits = 0u;
+            floating_type v = -100;
+            for (auto child : root->children) {
+                if (child->visits > visits || (child->visits == visits && child->expectedValue() >= v)) {
+                    move = child->move;
+                    visits = child->visits;
+                    v = child->expectedValue();
+                }
+            }
+            root = root->free(move);
+            return move;
+        }
+
+        constexpr floating_type branchOut(TreeNode &node) {
+            bool mirror = Base::board->getTurn();
+            auto prediction = network.forward(Base::board->getDecodedState().getPerspective(mirror), input, output);
+            node.children.reserve(node.not_fully_visited);
+            auto legal = Base::board->getLegalMoves();
+            for (uint p = 0; p < Game::AREA; ++p) {
+                auto pos = mirror? Game::Position::mirrorHorizontal(p).pos: p;
+                if (legal.get(pos)) {
+                    for (uint t = 1; t < 4; ++t)
+                        new TreeNode(node,
+                              {pos, mirror? (4-t): t},
+                              prediction[0][p * 3 + t - 1]
+                        );
+                }
+            }
+            return prediction[1][0];
+        }
     };
 }
 
@@ -1122,31 +3324,25 @@ void benchmark() {
     cerr << "done\n";
 }
 
-template <typename Board, typename MF>
-void competition(Board &board, MF* bot) {
-    using std::cout, std::cin, std::cerr;
-
-    Game::Move move;
-    while (!board.isOver()) {
-        if (bot->side == board.getTurn()) {
-            move = bot->suggest();
-            cout << (std::string)move << std::endl;
-        } else {
-            cin >> move;
-        }
-        board.play(move);
+template <typename T>
+void benchmarkNetwork(DeepLearning::Network<T> &net, T* in) {
+    uint tests = 10000;
+    std::chrono::time_point<std::chrono::system_clock> start, end;
+    std::cerr << "starting network benchmark...\n";
+    start = std::chrono::system_clock::now();
+    for (uint i = 0; i < tests; ++i) {
+        net.forward(in);
     }
-    board.getDecodedState().print(std::cerr);
+    end = std::chrono::system_clock::now();
+    std::cerr << "finished benchmark:\n";
+    std::cerr << double((double)tests / double(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()) * 1000.0) << " forwards per second" << '\n';
 }
 
-int main() {
-    Utils::Random::init();
-    using namespace Game;
-    using namespace MoveFinder;
+template <typename T, typename MF, typename ...Args>
+void competition(Args&&... args) {
     using std::cout, std::cin, std::cerr;
-    typedef float floating_type;
-    Board<floating_type> board;
-
+    using namespace Game;
+    Board<T> board;
     Move m1, m2;
 
     cin >> m1 >> m2;
@@ -1158,7 +3354,221 @@ int main() {
     if (s[0] != 'S') {
         board.play(Move(s.c_str()));
     }
-    competition(board, new MinimaxMoveController<BoardEvaluation::PotentialScore, floating_type>(board, board.getTurn()));
+    auto bot = new MF(board.getTurn(), std::forward<Args>(args)...);
+    bot->board = &board;
+
+    Game::Move move;
+    while (!board.isOver()) {
+        if (bot->side == board.getTurn()) {
+            move = bot->suggest();
+            cout << (std::string)move << std::endl;
+        } else {
+            cin >> move;
+        }
+        board.play(move);
+    }
+}
+
+template <typename T>
+std::pair<int, int> simulateGame(MoveFinder::MoveController<T>* blue, MoveFinder::MoveController<T>* red) {
+    using namespace Game;
+    Board<T> board;
+    board.play(board.randomMove());
+    board.play(board.randomMove());
+    blue->board = red->board = &board;
+
+    std::array<MoveFinder::MoveController<T>*, 2> bots{blue, red};
+    while (!board.isOver()) {
+        board.play(bots[board.getTurn()]->suggest());
+    }
+
+    delete blue;
+    delete red;
+
+    return {board.getScore(false), board.getScore(true)};
+}
+
+template <typename T>
+DeepLearning::Network<T>* initNetwork() {
+    using namespace DeepLearning;
+    using namespace Activation;
+    LayerBlock<T>* root = LayerBlock<T>::createLayerBlock({Game::HEIGHT, Game::WIDTH, Game::Board<T>::planes}, {
+            {CONV2D,     {3, 3, 8, 1}},
+            {ACTIVATION, {}, RELU},
+            {CONV2D,     {3, 3, 8, 1}},
+            {ACTIVATION, {}, RELU},
+            {CONV2D,     {3, 3, 8}},
+            {ACTIVATION, {}, TANH},
+    }, *Utils::RNG2, 2);
+    root->next[0] = LayerBlock<T>::createLayerBlock(root->getOutputSize(), {
+            {CONV2D,     {4, 4, 16}},
+            {ACTIVATION, {}, RELU},
+            {DENSE,      {Game::AREA*3}},
+            {ACTIVATION, {}, SOFTMAX},
+    }, *Utils::RNG2, 0);
+    root->next[1] = LayerBlock<T>::createLayerBlock(root->getOutputSize(), {
+            {DENSE,      {64}},
+            {ACTIVATION, {}, RELU},
+            {DENSE,      {1}},
+            {ACTIVATION, {}, TANH},
+    }, *Utils::RNG2, 0);
+    return new Network<T>(root);
+}
+
+template <typename T>
+bool isBetter(DeepLearning::Network<T> &o, DeepLearning::Network<T> &n, uint games=150) {
+    using namespace MoveFinder;
+    typedef NeuralNetworkTreeSearch<T> Agent;
+
+    constexpr uint numThreads = 11;
+
+    std::thread threads[numThreads];
+    uint score[2]{}, g = 0;
+    auto f = [&games, &g, &o, &n, &score]() {
+        while (g < games) {
+            ++g;
+            auto s = simulateGame(new Agent(false, o), new Agent(true, n));
+            score[0] += s.first;
+            score[1] += s.second;
+            //std::cerr << s.first << '-' << s.second << '\n';
+        }
+    };
+
+    for (auto & thread : threads) thread = std::thread(f);
+    for (auto & thread : threads) thread.join();
+
+    std::cerr << score[0]/(double)games << ' ' << score[1]/(double)games << '\n';
+    return score[0]/(double)games-2.0 <= score[1]/(double)games;
+}
+
+template <typename T>
+void train(const std::string &folder) {
+    using namespace std::chrono_literals;
+    using namespace DeepLearning;
+    using namespace MoveFinder;
+    typedef NeuralNetworkTreeSearch<T> Agent;
+
+    constexpr const uint numThreads = 12;
+    constexpr const uint gamesPerUpdate = 2048*2;
+
+    const DynamicVector<Loss::Loss<T>> loss = {
+            Loss::Loss<T>::template create<Loss::CrossEntropySoftmax>(),
+            Loss::Loss<T>::template create<Loss::MSETanh>()
+    };
+    constexpr const uint miniBatch = 2048/numThreads;
+
+    const std::string progressFileName = folder + "/progress.txt";
+    const std::string networkFileName = folder + "/network";
+
+    Network<T>* network = nullptr;
+    std::thread threads[numThreads];
+    bool running;
+    uint netID = 0, games = 0, totalGames = 0;
+
+    std::vector<typename Agent::Experience*> collection[numThreads];
+
+    if (!std::filesystem::exists(progressFileName)) {
+        std::cerr << "Creating progress file\n";
+        std::ofstream f1(progressFileName), f2(networkFileName + "0");
+        f1 << true << '\n' << netID << '\n' << totalGames;
+        f1.close();
+        auto n = initNetwork<T>();
+        n->save(f2);
+        f2.close();
+        delete n;
+    }
+    std::fstream progress(progressFileName, std::ios::in | std::ios::out);
+    progress >> running >> netID >> totalGames;
+    progress.close();
+    progress.clear();
+
+    {
+        std::ifstream file(networkFileName + std::to_string(netID));
+        network = Network<T>::load(file);
+        file.close();
+
+        network->setOptimizer(new Optimizers::SGD<T>(0.005));
+    }
+
+    auto f = [&games, &network, &collection](uint thread) {
+        while (games < gamesPerUpdate) {
+            games += 2;
+            typename Agent::Collector col[2]{};
+            auto score = simulateGame(new Agent(false, *network, &col[0]), new Agent(true, *network, &col[1]));
+            for (uint i : {0, 1}) {
+                col[i].complete(i? score.second: score.first);
+                std::copy(col[i].vec.begin(), col[i].vec.end(), std::back_inserter(collection[thread]));
+            }
+            std::cerr << games/2 << '/' << gamesPerUpdate/2 << ": " << score.first << '-' << score.second << " (" << thread << ")\n";
+        }
+    };
+
+    while (running) {
+        std::cerr << "Games Played: " << totalGames << '\n';
+        for (uint i = 0; i < numThreads; ++i) threads[i] = std::thread(f, i);
+        for (auto & thread : threads) thread.join();
+
+        typename Agent::DataSet set;
+        for (auto & i : collection) {
+            set.add(i);
+            i.clear();
+        }
+        set.size = set.e.size();
+
+        std::cerr << "Updating network\n";
+        network->template train(set, 2, miniBatch, loss, numThreads);
+
+        {
+            std::ifstream f1(networkFileName + std::to_string(netID));
+            auto old = Network<T>::load(f1);
+            f1.close();
+            network->setOptimizer(new Optimizers::SGD<T>(0.005));
+
+            if (isBetter(*old, *network)) {
+                std::ofstream f2(networkFileName + std::to_string(++netID));
+                delete old;
+                network->save(f2);
+                std::cerr << "Network did improve! :)\n";
+                totalGames += games;
+            } else {
+                delete network;
+                network = old;
+                std::cerr << "Network did not improve :(\n";
+            }
+        }
+        games = 0;
+
+        std::cerr << "Writing to progress file...\n";
+
+        progress.open(progressFileName);
+
+        progress >> running;
+        progress << '\n' << netID << '\n' << totalGames << '\n';
+
+        progress.close(); progress.clear();
+    }
+
+    delete network;
+}
+
+int main() {
+    Utils::Random::init();
+    using namespace Game;
+    using namespace MoveFinder;
+
+    typedef double T;
+
+    train<T>("networks");
+    return 0;
+
+    std::cerr << "Loading network...\n";
+    auto network = initNetwork<T>();
+    std::cerr << "Done:\n";
+    network->print(std::cerr);
+
+    //simulateGame(new NeuralNetworkTreeSearch<T>(false, *network), new RandomBot<T>(true));
+    competition<T, NeuralNetworkTreeSearch<T>>(*network);
+
     std::cerr << "\n\033[m";
     return 0;
 }
