@@ -12,13 +12,21 @@
 #include <functional>
 #include <fstream>
 
-//#define COMPETITION
+#define COMPETITION
 
 #ifndef COMPETITION
-#include <thread>
-#include <filesystem>
+
 //#define COLOR_BOARD
 #define USE_THREADS
+#define INCLUDE_FILE_SYSTEM
+
+#endif
+
+#ifdef INCLUDE_FILE_SYSTEM
+#include <filesystem>
+#endif
+#ifdef USE_THREADS
+#include <thread>
 #endif
 
 typedef uint_fast8_t uint8;
@@ -67,9 +75,9 @@ namespace Utils {
 
     template <typename T>
     constexpr void printHardCodeArray(const T* arr, uint len, std::ostream &out, const std::string &type="T") {
-        out << std::hexfloat << "Utils::initializeArray<"<<type<<">({";
+        out << "Utils::initializeArray<"<<type<<">({";
         for (uint i = 0; i < len; ++i) {
-            out << arr[i] << ',';
+            out << (float)arr[i] << ',';
         }
         out << "})" << std::defaultfloat;
     }
@@ -2052,7 +2060,7 @@ namespace DeepLearning {
                     for (uint i = 0; i < numThreads; ++i)
                         threads[i].join();
 #endif
-                    //std::cout << "mini batch no. " << miniBatch << " done!\n";
+                    //std::cerr << "mini batch no. " << miniBatch << " done!\n";
                     updateParameters();
                 }
 
@@ -3131,7 +3139,7 @@ namespace MoveFinder {
         constexpr const static floating_type
                 explorationRate = 3,
                 dirichletAlpha = 0.03,
-                weightPrior = 3,
+                weightPrior = 5,
                 weightDirichlet = 1;
 
         struct TreeNode {
@@ -3174,11 +3182,11 @@ namespace MoveFinder {
 
             nd_c floating_type expectedValue() const {
                 if (visits == 0) return 0;
-                return (value + total_score_gain*5) / visits;
+                return (value + total_score_gain*5.0) / floating_type(visits);
             }
 
             nd_c floating_type score() const {
-                return expectedValue() + explorationRate * prior * std::sqrt(parent->visits) / (visits + 1);
+                return expectedValue() + explorationRate * prior * std::sqrt(parent->visits) / floating_type(visits + 1);
             }
 
             nd_c TreeNode* selectChild() const {
@@ -3222,7 +3230,7 @@ namespace MoveFinder {
         Network &network;
         LayerBlock *input, **output;
 
-        uint rollouts = 1000;
+        uint rollouts = 1900;
         TreeNode* root = nullptr;
 
         NeuralNetworkTreeSearch(bool side, Network &network, Collector<T>* collector=nullptr):
@@ -3251,18 +3259,33 @@ namespace MoveFinder {
 
             root->addNoise();
 
-            std::array<typename Board::BoardChange, Game::AREA> changes;
+            int prevDepth = 0;
+            std::array<typename Board::BoardChange, Game::AREA> changes{};
+            std::array<TreeNode*, Game::AREA> children{};
             for (uint i = 0; i < rollouts; ++i) {
                 if (!root->not_fully_visited) break;
                 TreeNode* node = root;
 
-                uint depth = 0;
+                int depth = 0;
                 int scoreGain = 0;
+                bool same = i, played = false;
                 while (node->visits && node->not_fully_visited) {
                     node = node->selectChild();
-                    auto pre = Base::board->getScore(Base::board->getTurn());
-                    Base::board->play(node->move, &changes[depth++]);
-                    scoreGain = Base::board->getScore(!Base::board->getTurn()) - pre;
+                    if (same) {
+                        if (depth >= prevDepth || node != children[depth]) {
+                            same = false;
+                            for (int j = prevDepth-1; j >= depth; --j)
+                                Base::board->undo(changes[j]);
+                        }
+                    }
+                    if (!same) {
+                        played = true;
+                        auto pre = Base::board->getScore(Base::board->getTurn());
+                        Base::board->play(node->move, &changes[depth]);
+                        scoreGain = Base::board->getScore(!Base::board->getTurn()) - pre;
+                    }
+                    children[depth] = node;
+                    depth++;
                 }
 
                 if (!node->visits) {
@@ -3276,10 +3299,11 @@ namespace MoveFinder {
                     node->recordVisit(value, scoreGain);
                 } node->recordVisit(0, 0);
 
-                for (--depth; depth <= Game::AREA; --depth) Base::board->undo(changes[depth]); // todo remove unnecessary undo
+                if (played) prevDepth = depth;
             }
+            for (int j = prevDepth-1; j >= 0; --j) Base::board->undo(changes[j]);
 
-            if (collector) {
+            if ((collector && Base::board->getLegalMoves().count() >= 15)) {
                 bool turn = Base::board->getTurn();
                 auto e = new Experience<T>{(floating_type)Base::board->getScore(turn)};
                 auto in = Base::board->getDecodedState().getPerspective(turn);
@@ -3288,7 +3312,9 @@ namespace MoveFinder {
                     auto move = child->move;
                     auto pos = turn? Game::Position::mirrorHorizontal(move.pos()): move.pos();
                     uint t = turn? (3-move.type()): (move.type()-1);
-                    e->prior_label[pos*3+t] = child->visits/(floating_type)root->visits;
+                    auto v = child->visits/(floating_type)root->visits;
+                    e->prior_label[pos*3+t] = v;
+                    //if (v) std::cerr << (std::string)move << ": " << v << '\n';
                 }
                 collector->vec.push_back(e);
             }
@@ -3414,7 +3440,7 @@ std::pair<int, int> simulateGame(MoveFinder::MoveController<T>* blue, MoveFinder
 }
 
 template <typename T>
-DeepLearning::Network<T>* initNetwork() {
+DeepLearning::Network<T>* initRandomNetwork() {
     using namespace DeepLearning;
     using namespace Activation;
     LayerBlock<T>* root = LayerBlock<T>::createLayerBlock({Game::HEIGHT, Game::WIDTH, Game::Board<T>::planes}, {
@@ -3441,13 +3467,24 @@ DeepLearning::Network<T>* initNetwork() {
 }
 
 template <typename T>
+DeepLearning::Network<T>* initNetwork() {
+    using namespace DeepLearning;
+    std::ifstream f("../networks/network6");
+    return Network<T>::load(f);
+}
+
+template <typename T>
 bool isBetter(DeepLearning::Network<T> &o, DeepLearning::Network<T> &n, uint games=128) {
     using namespace MoveFinder;
     typedef NeuralNetworkTreeSearch<T> Agent;
 
-    constexpr uint numThreads = 10;
 
+#ifdef USE_THREADS
+    constexpr const uint numThreads = 10;
     std::thread threads[numThreads];
+#else
+    constexpr const uint numThreads = 1;
+#endif
     uint score[2]{}, g = 0;
     auto f = [&games, &g, &o, &n, &score]() {
         while (g < games) {
@@ -3464,13 +3501,18 @@ bool isBetter(DeepLearning::Network<T> &o, DeepLearning::Network<T> &n, uint gam
         }
     };
 
+#ifdef USE_THREADS
     for (auto & thread : threads) thread = std::thread(f);
     for (auto & thread : threads) thread.join();
+#else
+    f();
+#endif
 
-    std::cerr << score[0]/(double)games << ' ' << score[1]/(double)games << '\n';
-    return score[0]/(double)games-0.75 <= score[1]/(double)games;
+    std::cerr << score[0]/(double)games << '-' << score[1]/(double)games << '\n';
+    return score[0]/(double)games-0.4 <= score[1]/(double)games;
 }
 
+#ifdef INCLUDE_FILE_SYSTEM
 template <typename T>
 void train(const std::string &folder) {
     using namespace std::chrono_literals;
@@ -3479,8 +3521,13 @@ void train(const std::string &folder) {
     typedef NeuralNetworkTreeSearch<T> SmartAgent;
     typedef MinimaxMoveController<BoardEvaluation::PotentialScore, T> MinimaxAgent;
 
-    constexpr const uint numThreads = 10;
-    constexpr const uint gamesPerUpdate[2] = {2500, 2048};
+#ifdef USE_THREADS
+    constexpr const uint numThreads = 11;
+    std::thread threads[numThreads];
+#else
+    constexpr const uint numThreads = 1;
+#endif
+    constexpr const uint gamesPerUpdate[2] = {2500, 254};
 
     const DynamicVector<Loss::Loss<T>> loss = {
             Loss::Loss<T>::template create<Loss::CrossEntropySoftmax>(),
@@ -3492,7 +3539,6 @@ void train(const std::string &folder) {
     const std::string networkFileName = folder + "/network";
 
     Network<T>* network = nullptr;
-    std::thread threads[numThreads];
     bool running, surpassed;
     uint netID = 0, games = 0, totalGames = 0;
     std::pair<int, int> totalScore = {0, 0};
@@ -3504,7 +3550,7 @@ void train(const std::string &folder) {
         std::ofstream f1(progressFileName), f2(networkFileName + "0");
         f1 << "1\n" << netID << "\n0\n" << totalGames;
         f1.close();
-        auto n = initNetwork<T>();
+        auto n = initRandomNetwork<T>();
         n->save(f2);
         f2.close();
         delete n;
@@ -3519,7 +3565,7 @@ void train(const std::string &folder) {
         network = Network<T>::load(file);
         file.close();
 
-        network->setOptimizer(new Optimizers::SGD<T>(0.0007));
+        network->setOptimizer(new Optimizers::SGD<T>(0.00005));
     }
 
     auto f = [&games, &network, &collection, &gamesPerUpdate, &surpassed, &totalScore](uint thread) {
@@ -3535,8 +3581,9 @@ void train(const std::string &folder) {
             for (uint i : {0, 1}) {
                 col[i].complete((i || !surpassed)? score.second: score.first);
                 std::copy(col[i].vec.begin(), col[i].vec.end(), std::back_inserter(collection[thread]));
-                if (surpassed) break;
+                if (!surpassed) break;
             }
+            //std::cerr << collection[thread].size() << '\n';
             totalScore.first += score.first;
             totalScore.second += score.second;
             std::cerr << games << '/' << gamesPerUpdate[surpassed] << ": " << score.first << '-' << score.second << " (" << thread << ")\n";
@@ -3548,11 +3595,14 @@ void train(const std::string &folder) {
         games = 0;
         std::cerr << "Games Played: " << totalGames << ", version: " << netID << '\n';
 
+#ifdef USE_THREADS
         for (uint i = 0; i < numThreads; ++i) threads[i] = std::thread(f, i);
         for (auto & thread : threads) thread.join();
-
-        double avgScore[2] {totalScore.first/(double)gamesPerUpdate[surpassed], totalScore.second/(double)gamesPerUpdate[surpassed]};
-        std::cerr << "Mean Score: " << avgScore[0] << '-' << avgScore[1] << "\n";
+#else
+        f(0);
+#endif
+        double avgScore[2] {totalScore.first/(double)gamesPerUpdate[surpassed]*2*surpassed, totalScore.second/(double)gamesPerUpdate[surpassed]*2*surpassed};
+        std::cerr << "Avg Score: " << avgScore[0] << '-' << avgScore[1] << "\n";
 
         if (!surpassed && avgScore[0]-2 >= avgScore[1]) {
             surpassed = true;
@@ -3572,7 +3622,7 @@ void train(const std::string &folder) {
             std::ifstream f1(networkFileName + std::to_string(netID));
             auto old = Network<T>::load(f1);
             f1.close();
-            old->setOptimizer(new Optimizers::SGD<T>(0.0007));
+            old->setOptimizer(new Optimizers::SGD<T>(0.00005));
 
             if (isBetter(*old, *network)) {
                 std::cerr << "Network did improve! :)\n";
@@ -3600,6 +3650,7 @@ void train(const std::string &folder) {
 
     delete network;
 }
+#endif
 
 void play(std::initializer_list<Game::Move> moves) {
     using namespace Game;
@@ -3620,24 +3671,47 @@ int main() {
     using namespace DeepLearning;
 
     typedef double T;
+
+#ifdef COMPETITION
+    auto network = initNetwork<T>();
+
+    competition<T, NeuralNetworkTreeSearch<T>>(*network);
+#else
 /*
-    std::ifstream f1("networks/network0"), f2("networks/network6");
+    std::ifstream f1("networks/network6"), f2("networks/network7");
     auto n1 = Network<T>::load(f1), n2 = Network<T>::load(f2);
 
-    isBetter(*n1, *n2, 200);
+    isBetter(*n1, *n2, 250);
+
+    f1.close();
+    f2.close();
 
     return 0;
-    */
+*/
+    /*
+    std::ifstream f1("networks/network6");
+    auto n1 = Network<T>::load(f1);
+
+    std::ofstream fout("hardcode.txt");
+
+    n1->printHardCodeInitializer(fout);
+
+    f1.close();
+    fout.close();
+    return 0;
+*/
+
     train<T>("networks");
     return 0;
 
     std::cerr << "Loading network...\n";
-    auto network = initNetwork<T>();
+    auto network = initRandomNetwork<T>();
     std::cerr << "Done:\n";
     network->print(std::cerr);
 
     //simulateGame(new NeuralNetworkTreeSearch<T>(false, *network), new RandomBot<T>(true));
-    competition<T, NeuralNetworkTreeSearch<T>>(*network);
+#endif
+
 
     std::cerr << "\n\033[m";
     return 0;
